@@ -13,7 +13,10 @@ ARCH ?= $(shell uname -m)
 CFLAGS = -Wall -O3 -I src -std=c11 -D LIBHL_EXPORTS
 LFLAGS = -L. -lhl
 EXTRA_LFLAGS ?=
-LIBFLAGS =
+LIBFLAGS = -L/usr/local/lib -L/usr/local/opt/openal-soft/lib -lpng -lturbojpeg -luv -lmbedtls -lmbedcrypto -lmbedx509 -lopenal -lvorbisfile -lvorbis -logg
+INC = -I . -I /usr/local/include -I /usr/local/opt/openal-soft/include -Dopenal_soft
+MACOS_FLAGS = -mmacosx-version-min=10.7 -Wno-deprecated-declarations
+
 HLFLAGS = -ldl
 LIBEXT = so
 LIBTURBOJPEG = -lturbojpeg
@@ -149,9 +152,9 @@ else ifeq ($(UNAME),Darwin)
 # Mac
 LIBEXT=dylib
 
-BREW_PREFIX := $(shell brew --prefix)
-# prefixes for keg-only packages
-BREW_OPENAL_PREFIX := $(shell brew --prefix openal-soft)
+BREW_PREFIX := $(shell arch -x86_64 /usr/local/bin/brew --prefix)
+## prefixes for keg-only packages
+BREW_OPENAL_PREFIX := $(shell arch -x86_64 /usr/local/bin/brew --prefix openal-soft)
 
 CFLAGS += -m$(MARCH) -I include -I $(BREW_PREFIX)/include -I $(BREW_OPENAL_PREFIX)/include -Dopenal_soft -DGL_SILENCE_DEPRECATION
 LFLAGS += -Wl,-export_dynamic
