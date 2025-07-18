@@ -1,7 +1,7 @@
 # Makefile for Metal HDLL
 
-CFLAGS = -shared -fPIC -D HL_METAL -I ../../src
-LIBS = -L../.. -lhl
+CFLAGS = -shared -fPIC -D HL_METAL -I ../../src -I ../sdl
+LIBS = -L../.. -lhl -L/usr/local/lib -lSDL2
 FRAMEWORKS = -framework Metal -framework Foundation -framework QuartzCore -framework AppKit
 
 all: metal.hdll
