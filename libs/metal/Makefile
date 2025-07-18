@@ -1,19 +1,15 @@
 # Makefile for Metal HDLL
-CFLAGS = -fPIC -D HL_METAL -I ../../src -ObjC
-FRAMEWORKS = -framework Metal -framework Foundation -framework QuartzCore
-FRAMEWORKS = -framework Metal -framework Foundation -framework QuartzCore -framework AppKit
-LFLAGS = -L../.. -lhl
 
-# Force x86_64 to match HashLink library
-ARCH_FLAGS = -arch x86_64
+CFLAGS = -shared -fPIC -D HL_METAL -I ../../src
+LIBS = -L../.. -lhl
+FRAMEWORKS = -framework Metal -framework Foundation -framework QuartzCore -framework AppKit
 
 all: metal.hdll
 
-metal.hdll:
-	clang -shared $(CFLAGS) $(FRAMEWORKS) -o ../../metal.hdll metal.m $(LFLAGS)
-	clang -shared $(CFLAGS) $(ARCH_FLAGS) $(FRAMEWORKS) -o ../../metal.hdll metal.m $(LFLAGS)
+metal.hdll: metal.m
+	$(CC) -ObjC $(CFLAGS) $(FRAMEWORKS) -o ../../metal.hdll metal.m $(LIBS)
 
 clean:
 	rm -f ../../metal.hdll
 
-.PHONY: all metal.hdll clean
+.PHONY: all clean
