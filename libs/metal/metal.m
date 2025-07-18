@@ -1,214 +1,142 @@
 #define HL_NAME(n) metal_##n
+
 #include <hl.h>
+#include <SDL2/SDL.h>
+#include <metal/metal.h>
+#include <QuartzCore/CAMetalLayer.h>
 
-#import <Metal/Metal.h>
-#import <QuartzCore/CAMetalLayer.h>
-#import <AppKit/AppKit.h>
-
-// Define a structure to hold the Metal driver state
 typedef struct {
     id<MTLDevice> device;
     id<MTLCommandQueue> commandQueue;
-    CAMetalLayer *metalLayer;
+    CAMetalLayer *layer;
     id<MTLRenderPipelineState> pipelineState;
-} metal_driver;
+    MTLRenderPassDescriptor *renderPassDescriptor;
+    dispatch_semaphore_t frameSemaphore;
+    SDL_Window *window;
+} metal_context;
 
-static metal_driver *driver = NULL;
+static metal_context *ctx = NULL;
 
-// Initialize the Metal driver
-HL_PRIM metal_driver *HL_NAME(init)(void) {
-    if (driver != NULL)
-        return driver;
+// HL abstract types
+#define TCTX _ABSTRACT(metal_context)
+#define TDEV _ABSTRACT(metal_device)
+#define TCMDBUF _ABSTRACT(metal_command_buffer)
+#define TCMDENC _ABSTRACT(metal_command_encoder)
+#define TTEX _ABSTRACT(metal_texture)
+#define TBUF _ABSTRACT(metal_buffer)
+#define TPIPST _ABSTRACT(metal_pipeline_state)
 
-    driver = (metal_driver*)malloc(sizeof(metal_driver));
-    if (driver == NULL)
-        return NULL;
+HL_PRIM void HL_NAME(init)(void) {
+    if (ctx != NULL) return;
 
-    // Get default Metal device
-    driver->device = MTLCreateSystemDefaultDevice();
-    if (!driver->device) {
-        free(driver);
-        driver = NULL;
-        return NULL;
+    ctx = (metal_context*)malloc(sizeof(metal_context));
+    memset(ctx, 0, sizeof(metal_context));
+
+    // Get the default Metal device
+    ctx->device = MTLCreateSystemDefaultDevice();
+    if (!ctx->device) {
+        printf("Metal is not supported on this device\n");
+        free(ctx);
+        ctx = NULL;
+        return;
     }
 
-    // Create command queue
-    driver->commandQueue = [driver->device newCommandQueue];
-    if (!driver->commandQueue) {
-        [driver->device release];
-        free(driver);
-        driver = NULL;
-        return NULL;
-    }
-
-    driver->metalLayer = NULL;
-    driver->pipelineState = NULL;
-
-    return driver;
+    // Create a command queue
+    ctx->commandQueue = [ctx->device newCommandQueue];
+    ctx->frameSemaphore = dispatch_semaphore_create(1);
 }
 
-// Create a Metal layer for rendering
-HL_PRIM void HL_NAME(set_target)(void *nativeWindow, int width, int height) {
-    if (!driver || !driver->device)
-        return;
-
-    if (driver->metalLayer == NULL) {
-        driver->metalLayer = [CAMetalLayer layer];
-        [driver->metalLayer setDevice:driver->device];
-        [driver->metalLayer setPixelFormat:MTLPixelFormatBGRA8Unorm];
-        [driver->metalLayer setFramebufferOnly:YES];
+HL_PRIM bool HL_NAME(setup_window)(void* win) {
+    if (ctx == NULL) {
+        printf("Metal context not initialized\n");
+        return false;
     }
 
-    // Set the drawable size
-    [driver->metalLayer setDrawableSize:CGSizeMake(width, height)];
-}
+    SDL_Window* window = (SDL_Window*)win;
+    ctx->window = window;
 
-// Clear the render pass with specified color and depth
-HL_PRIM void HL_NAME(clear)(void* renderPassPtr, double r, double g, double b, double a, double depth, int stencil) {
-    if (!driver || !driver->device || !driver->metalLayer)
-        return;
+    // Get the SDL metal view
+    SDL_MetalView metalView = SDL_Metal_CreateView(window);
+    if (!metalView) {
+        printf("Failed to create Metal view: %s\n", SDL_GetError());
+        return false;
+    }
 
-    // Get a drawable from the layer
-    id<CAMetalDrawable> drawable = [driver->metalLayer nextDrawable];
-    if (!drawable)
-        return;
+    // Get the Metal layer from the Metal view
+    ctx->layer = (CAMetalLayer *)SDL_Metal_GetLayer(metalView);
+    ctx->layer.device = ctx->device;
+    ctx->layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
 
     // Create a render pass descriptor
-    MTLRenderPassDescriptor *renderPassDescriptor = [MTLRenderPassDescriptor renderPassDescriptor];
-    renderPassDescriptor.colorAttachments[0].texture = drawable.texture;
-    renderPassDescriptor.colorAttachments[0].loadAction = MTLLoadActionClear;
-    renderPassDescriptor.colorAttachments[0].clearColor = MTLClearColorMake(r, g, b, a);
-    renderPassDescriptor.colorAttachments[0].storeAction = MTLStoreActionStore;
+    ctx->renderPassDescriptor = [MTLRenderPassDescriptor renderPassDescriptor];
 
-    // Create a command buffer
-    id<MTLCommandBuffer> commandBuffer = [driver->commandQueue commandBuffer];
+    return true;
+}
 
-    // Create a render command encoder
-    id<MTLRenderCommandEncoder> renderEncoder = [commandBuffer renderCommandEncoderWithDescriptor:renderPassDescriptor];
+HL_PRIM bool HL_NAME(begin_render)(int r, int g, int b, int a) {
+    if (ctx == NULL) return false;
+
+    // Wait for the previous frame to complete
+    dispatch_semaphore_wait(ctx->frameSemaphore, DISPATCH_TIME_FOREVER);
+
+    // Get the next drawable
+    id<CAMetalDrawable> drawable = [ctx->layer nextDrawable];
+    if (!drawable) {
+        dispatch_semaphore_signal(ctx->frameSemaphore);
+        return false;
+    }
+
+    // Update the render pass descriptor for the current drawable
+    ctx->renderPassDescriptor.colorAttachments[0].texture = drawable.texture;
+    ctx->renderPassDescriptor.colorAttachments[0].loadAction = MTLLoadActionClear;
+    ctx->renderPassDescriptor.colorAttachments[0].storeAction = MTLStoreActionStore;
+    ctx->renderPassDescriptor.colorAttachments[0].clearColor = MTLClearColorMake(r/255.0, g/255.0, b/255.0, a/255.0);
+
+    // Create a command buffer and render command encoder
+    id<MTLCommandBuffer> commandBuffer = [ctx->commandQueue commandBuffer];
+    id<MTLRenderCommandEncoder> renderEncoder = [commandBuffer renderCommandEncoderWithDescriptor:ctx->renderPassDescriptor];
+
+    // End encoding and commit the command buffer
     [renderEncoder endEncoding];
 
-    // Present drawable
+    // Present the drawable
     [commandBuffer presentDrawable:drawable];
+
+    // Commit the command buffer and signal the semaphore when done
+    [commandBuffer addCompletedHandler:^(id<MTLCommandBuffer> _Nonnull cmdBuf) {
+        dispatch_semaphore_signal(ctx->frameSemaphore);
+    }];
+
     [commandBuffer commit];
+
+    return true;
 }
 
-// Dispatch a compute kernel with specified dimensions
-HL_PRIM void HL_NAME(compute_dispatch)(int x, int y, int z) {
+HL_PRIM void HL_NAME(shutdown)(void) {
+    if (ctx != NULL) {
+        // Wait for any pending commands to complete
+        dispatch_semaphore_wait(ctx->frameSemaphore, DISPATCH_TIME_FOREVER);
+        dispatch_release(ctx->frameSemaphore);
 
-    if (!driver || !driver->device)
-        return;
+        // Release Metal resources
+        ctx->device = nil;
+        ctx->commandQueue = nil;
+        ctx->layer = nil;
+        ctx->pipelineState = nil;
+        ctx->renderPassDescriptor = nil;
 
-    NSLog(@"Metal compute_dispatch called with dimensions: %d x %d x %d", x, y, z);
-}
-
-HL_PRIM void HL_NAME(begin_render_pass)() {
-    if (!driver || !driver->device || !driver->metalLayer)
-        return;
-
-    NSLog(@"Metal begin_render_pass called");
-}
-
-// Cleanup function
-HL_PRIM void HL_NAME(free)(void) {
-    if (driver) {
-
-        // Release the Metal layer if it exists
-        if (driver->pipelineState) {
-            [driver->pipelineState release];
-        }
-
-        // Release the command queue and device
-        if (driver->commandQueue) {
-            [driver->commandQueue release];
-        }
-
-				// Release the Metal device
-        if (driver->device) {
-            [driver->device release];
-        }
-
-        // Note: CAMetalLayer is autoreleased
-
-        free(driver);
-        driver = NULL;
+        free(ctx);
+        ctx = NULL;
     }
 }
 
-// Release the Metal device
-HL_PRIM void HL_NAME(release_metal_device)(void* device) {
-    if (!device)
-        return;
-
-    // Cast the device pointer back to Metal device and release it
-    id<MTLDevice> metalDevice = (__bridge id<MTLDevice>)device;
-    [metalDevice release];
+HL_PRIM const char* HL_NAME(get_driver_name)(void) {
+    return "Metal";
 }
 
-// Create a new Metal device
-HL_PRIM void* HL_NAME(create_metal_device)(void) {
-    id<MTLDevice> device = MTLCreateSystemDefaultDevice();
-    if (!device) {
-        return NULL;
-    }
-
-    return (__bridge void*)device;
-}
-
-// Setup the Metal layer for rendering
-HL_PRIM void HL_NAME(setup_metal_layer)(void* nsWindowPtr, int width, int height) {
-    if (!nsWindowPtr) {
-        return;
-    }
-
-    // Cast the window pointer back to NSWindow
-    NSWindow* window = (__bridge NSWindow*)nsWindowPtr;
-
-    // Create or update the metal layer
-    if (driver && driver->metalLayer == NULL) {
-        driver->metalLayer = [CAMetalLayer layer];
-        [driver->metalLayer setDevice:driver->device];
-        [driver->metalLayer setPixelFormat:MTLPixelFormatBGRA8Unorm];
-        [driver->metalLayer setFramebufferOnly:YES];
-
-        // Add the layer to the window's content view
-        NSView* contentView = [window contentView];
-        [contentView setLayer:driver->metalLayer];
-        [contentView setWantsLayer:YES];
-    }
-
-    // Set the drawable size
-    if (driver && driver->metalLayer) {
-        [driver->metalLayer setDrawableSize:CGSizeMake(width, height)];
-    }
-}
-
-// Present the current frame
-HL_PRIM void HL_NAME(present)() {
-    if (!driver || !driver->device || !driver->metalLayer)
-        return;
-
-    NSLog(@"Metal present called");
-}
-
-// Resize the Metal layer when window size changes
-HL_PRIM void HL_NAME(resize_metal_layer)(int width, int height) {
-    if (!driver || !driver->device || !driver->metalLayer)
-        return;
-
-    // Resize the Metal layer to the new dimensions
-    [driver->metalLayer setDrawableSize:CGSizeMake(width, height)];
-    NSLog(@"Metal layer resized to %d x %d", width, height);
-}
-
-#define _DRIVER _ABSTRACT(metal_driver)
-DEFINE_PRIM(_DRIVER, init, _NO_ARG);
-DEFINE_PRIM(_VOID, set_target, _BYTES _I32 _I32);
-DEFINE_PRIM(_VOID, clear, _F64 _F64 _F64 _F64 _F64 _I32);
-DEFINE_PRIM(_VOID, compute_dispatch, _I32 _I32 _I32);
-DEFINE_PRIM(_VOID, begin_render_pass, _NO_ARG);
-DEFINE_PRIM(_VOID, free, _NO_ARG);
-DEFINE_PRIM(_VOID, release_metal_device, _DYN);
-DEFINE_PRIM(_DYN, create_metal_device, _NO_ARG);
-DEFINE_PRIM(_VOID, setup_metal_layer, _DYN _I32 _I32);
-DEFINE_PRIM(_VOID, present, _NO_ARG);
-DEFINE_PRIM(_VOID, resize_metal_layer, _I32 _I32);
+// Export Hashlink functions
+DEFINE_PRIM(_VOID, init, _NO_ARG);
+DEFINE_PRIM(_BOOL, setup_window, _ABSTRACT(sdl_window));
+DEFINE_PRIM(_BOOL, begin_render, _I32 _I32 _I32 _I32);
+DEFINE_PRIM(_VOID, shutdown, _NO_ARG);
+DEFINE_PRIM(_BYTES, get_driver_name, _NO_ARG);
