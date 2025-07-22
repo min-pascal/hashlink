@@ -6,13 +6,28 @@
 #include <Metal/Metal.h>
 #include <QuartzCore/CAMetalLayer.h>
 
+#define DEBUG_FILE "/tmp/metal_debug.log"
+
+// Helper function to write debug messages to a file
+void metal_debug_log(const char* message, ...) {
+    va_list args;
+    va_start(args, message);
+    FILE *f = fopen(DEBUG_FILE, "a");
+    if (f) {
+        fprintf(f, "[METAL] ");
+        vfprintf(f, message, args);
+        fprintf(f, "\n");
+        fclose(f);
+    }
+    va_end(args);
+}
+
 typedef struct {
     id<MTLDevice> device;
     id<MTLCommandQueue> commandQueue;
     CAMetalLayer *layer;
     SDL_MetalView metalView;
     SDL_Window *window;
-    MTLRenderPassDescriptor *renderPassDescriptor;
     bool windowSetup;
 } metal_context;
 
@@ -163,6 +178,12 @@ HL_PRIM void HL_NAME(test_window)(int r, int g, int b) {
 HL_PRIM void HL_NAME(init)(void) {
     if (ctx != NULL) return;
 
+    // Clear the debug log file at the start
+    FILE *f = fopen(DEBUG_FILE, "w");
+    if (f) fclose(f);
+
+    metal_debug_log("Metal init() called");
+
     @autoreleasepool {
         ctx = (metal_context*)malloc(sizeof(metal_context));
         memset(ctx, 0, sizeof(metal_context));
@@ -170,33 +191,37 @@ HL_PRIM void HL_NAME(init)(void) {
         // Get the default Metal device
         ctx->device = MTLCreateSystemDefaultDevice();
         if (!ctx->device) {
-            printf("Metal is not supported on this device\n");
+            metal_debug_log("Metal is not supported on this device");
             free(ctx);
             ctx = NULL;
             return;
         }
+        metal_debug_log("Metal device created: %s", [[ctx->device name] UTF8String]);
 
         // Create a command queue
         ctx->commandQueue = [ctx->device newCommandQueue];
         if (!ctx->commandQueue) {
-            printf("Failed to create Metal command queue\n");
+            metal_debug_log("Failed to create Metal command queue");
             free(ctx);
             ctx = NULL;
             return;
         }
+        metal_debug_log("Metal command queue created");
 
-        // Create render pass descriptor
-        ctx->renderPassDescriptor = [MTLRenderPassDescriptor renderPassDescriptor];
+        // Don't create render pass descriptor here - create it fresh each frame
         ctx->windowSetup = false;
+        metal_debug_log("Metal init complete");
     }
 }
 
 // Use _DYN instead of specific SDL window type to match what Heaps expects
 HL_PRIM bool HL_NAME(setup_window)(vdynamic *win) {
     if (ctx == NULL) {
-        printf("Metal context not initialized\n");
+        metal_debug_log("Metal context not initialized");
         return false;
     }
+
+    metal_debug_log("Setting up Metal window");
 
     @autoreleasepool {
         // Extract SDL_Window from the dynamic value
@@ -206,17 +231,19 @@ HL_PRIM bool HL_NAME(setup_window)(vdynamic *win) {
         // Create SDL Metal view
         ctx->metalView = SDL_Metal_CreateView(window);
         if (!ctx->metalView) {
-            printf("Failed to create Metal view: %s\n", SDL_GetError());
+            metal_debug_log("Failed to create Metal view: %s", SDL_GetError());
             return false;
         }
+        metal_debug_log("Metal view created");
 
         // Get the Metal layer from the Metal view
         ctx->layer = (CAMetalLayer *)SDL_Metal_GetLayer(ctx->metalView);
         if (!ctx->layer) {
-            printf("Failed to get Metal layer\n");
+            metal_debug_log("Failed to get Metal layer");
             SDL_Metal_DestroyView(ctx->metalView);
             return false;
         }
+        metal_debug_log("Metal layer obtained");
 
         // Configure the Metal layer using the same settings as the working test
         ctx->layer.device = ctx->device;
@@ -228,48 +255,73 @@ HL_PRIM bool HL_NAME(setup_window)(vdynamic *win) {
         int width, height;
         SDL_GetWindowSize(window, &width, &height);
         ctx->layer.drawableSize = CGSizeMake(width, height);
+        metal_debug_log("Metal layer configured with size %d x %d", width, height);
 
         ctx->windowSetup = true;
+        metal_debug_log("Window setup complete");
     }
 
     return true;
 }
 
 HL_PRIM bool HL_NAME(begin_render)(int r, int g, int b, int a) {
-    if (ctx == NULL || !ctx->windowSetup) return false;
+    if (ctx == NULL || !ctx->windowSetup) {
+        metal_debug_log("Cannot begin_render: ctx is NULL or window not set up");
+        return false;
+    }
+
+    metal_debug_log("begin_render called with color RGBA(%d, %d, %d, %d)", r, g, b, a);
 
     @autoreleasepool {
         // Get the next drawable
         id<CAMetalDrawable> drawable = [ctx->layer nextDrawable];
         if (!drawable) {
+            metal_debug_log("Failed to get next drawable");
+            return false;
+        }
+        metal_debug_log("Got Metal drawable");
+
+        // Create a fresh render pass descriptor each time - this is the key fix
+        MTLRenderPassDescriptor* renderPassDescriptor = [MTLRenderPassDescriptor renderPassDescriptor];
+        if (!renderPassDescriptor) {
+            metal_debug_log("Failed to create render pass descriptor");
             return false;
         }
 
-        // Configure render pass descriptor exactly like the working test
-        ctx->renderPassDescriptor.colorAttachments[0].texture = drawable.texture;
-        ctx->renderPassDescriptor.colorAttachments[0].loadAction = MTLLoadActionClear;
-        ctx->renderPassDescriptor.colorAttachments[0].storeAction = MTLStoreActionStore;
-        ctx->renderPassDescriptor.colorAttachments[0].clearColor = MTLClearColorMake(
+        // Configure the render pass descriptor
+        renderPassDescriptor.colorAttachments[0].texture = drawable.texture;
+        renderPassDescriptor.colorAttachments[0].loadAction = MTLLoadActionClear;
+        renderPassDescriptor.colorAttachments[0].storeAction = MTLStoreActionStore;
+        renderPassDescriptor.colorAttachments[0].clearColor = MTLClearColorMake(
             r/255.0, g/255.0, b/255.0, a/255.0
         );
+        metal_debug_log("Render pass descriptor configured with clear color");
 
         // Create command buffer
         id<MTLCommandBuffer> commandBuffer = [ctx->commandQueue commandBuffer];
-        if (!commandBuffer) return false;
+        if (!commandBuffer) {
+            metal_debug_log("Failed to create command buffer");
+            return false;
+        }
 
         // Create render encoder
         id<MTLRenderCommandEncoder> renderEncoder = 
-            [commandBuffer renderCommandEncoderWithDescriptor:ctx->renderPassDescriptor];
-        if (!renderEncoder) return false;
+            [commandBuffer renderCommandEncoderWithDescriptor:renderPassDescriptor];
+        if (!renderEncoder) {
+            metal_debug_log("Failed to create render encoder");
+            return false;
+        }
 
         // End encoding immediately (just clearing)
         [renderEncoder endEncoding];
+        metal_debug_log("Render encoding complete");
 
         // Present the drawable
         [commandBuffer presentDrawable:drawable];
         
         // Commit the command buffer
         [commandBuffer commit];
+        metal_debug_log("Command buffer committed");
     }
 
     return true;
@@ -280,17 +332,24 @@ HL_PRIM vdynamic* HL_NAME(alloc_buffer)(int size, int flags) {
     if (ctx == NULL) return NULL;
 
     @autoreleasepool {
+        // Debug output for allocation
+        printf("Metal allocating buffer of size: %d bytes\n", size);
+
+        if (size <= 0) {
+            printf("Warning: Trying to allocate a buffer of size <= 0\n");
+            size = 1024; // Minimum size
+        }
+
         // Create a Metal buffer with the specified size
         id<MTLBuffer> metalBuffer = [ctx->device newBufferWithLength:size 
                                                              options:MTLResourceStorageModeShared];
         
         if (!metalBuffer) {
+            printf("Failed to allocate Metal buffer of size %d\n", size);
             return NULL;
         }
 
         // Create a dynamic integer value to return
-        // Using an integer handle is more compatible with how Heaps expects GPU buffers
-        // This avoids the segmentation fault by not returning a complex object
         vdynamic *result = (vdynamic*)hl_gc_alloc_noptr(sizeof(vdynamic));
         result->t = &hlt_i32;
         result->v.i = (int)(uintptr_t)metalBuffer; // Cast pointer to integer
@@ -321,16 +380,13 @@ HL_PRIM void HL_NAME(shutdown)(void) {
             }
 
             // Release Metal resources
-            if (ctx->renderPassDescriptor) {
-                ctx->renderPassDescriptor = nil;
-            }
             if (ctx->commandQueue) {
                 ctx->commandQueue = nil;
             }
             if (ctx->device) {
                 ctx->device = nil;
             }
-            
+
             ctx->layer = nil;
         }
 
