@@ -518,69 +518,43 @@ HL_PRIM bool HL_NAME(create_triangle)(float* positions, float* colors, int verte
 
 // Render the triangle - updated version of begin_render that includes triangle rendering
 HL_PRIM bool HL_NAME(render_triangle)(int r, int g, int b, int a) {
-    if (ctx == NULL || !ctx->windowSetup || !ctx->pipelineState || !ctx->vertexBuffer) {
-        metal_debug_log("Cannot render triangle: missing required resources");
-        return false;
-    }
-
-    metal_debug_log("render_triangle called with bg color RGBA(%d, %d, %d, %d), %lu vertices",
-                   r, g, b, a, ctx->vertexCount);
-
+    if (ctx == NULL || !ctx->windowSetup) return false;
+    
     @autoreleasepool {
-        // Get the next drawable
+        // Get the next drawable from the layer
         id<CAMetalDrawable> drawable = [ctx->layer nextDrawable];
-        if (!drawable) {
-            metal_debug_log("Failed to get next drawable");
-            return false;
-        }
-
-        // Create render pass descriptor
-        MTLRenderPassDescriptor* renderPassDescriptor = [MTLRenderPassDescriptor renderPassDescriptor];
-        renderPassDescriptor.colorAttachments[0].texture = drawable.texture;
-        renderPassDescriptor.colorAttachments[0].loadAction = MTLLoadActionClear;
-        renderPassDescriptor.colorAttachments[0].storeAction = MTLStoreActionStore;
-        renderPassDescriptor.colorAttachments[0].clearColor = MTLClearColorMake(
-            r/255.0, g/255.0, b/255.0, a/255.0
-        );
+        if (!drawable) return false;
 
         // Create command buffer
         id<MTLCommandBuffer> commandBuffer = [ctx->commandQueue commandBuffer];
-        if (!commandBuffer) {
-            metal_debug_log("Failed to create command buffer");
-            return false;
+        
+        // Set up render pass descriptor with clear color
+        MTLRenderPassDescriptor *renderPassDescriptor = [MTLRenderPassDescriptor renderPassDescriptor];
+        renderPassDescriptor.colorAttachments[0].texture = drawable.texture;
+        renderPassDescriptor.colorAttachments[0].loadAction = MTLLoadActionClear;
+        renderPassDescriptor.colorAttachments[0].storeAction = MTLStoreActionStore;
+        
+        // Set clear color (convert from 0-255 int to 0.0-1.0 float)
+        renderPassDescriptor.colorAttachments[0].clearColor = MTLClearColorMake(
+            r / 255.0, g / 255.0, b / 255.0, a / 255.0
+        );
+
+        // Create render command encoder
+        id<MTLRenderCommandEncoder> renderEncoder = [commandBuffer renderCommandEncoderWithDescriptor:renderPassDescriptor];
+        
+        // Render triangle if we have vertex data
+        if (ctx->pipelineState && ctx->vertexBuffer && ctx->vertexCount > 0) {
+            [renderEncoder setRenderPipelineState:ctx->pipelineState];
+            [renderEncoder setVertexBuffer:ctx->vertexBuffer offset:0 atIndex:0];
+            [renderEncoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:ctx->vertexCount];
         }
-
-        // Create render encoder
-        id<MTLRenderCommandEncoder> renderEncoder =
-            [commandBuffer renderCommandEncoderWithDescriptor:renderPassDescriptor];
-        if (!renderEncoder) {
-            metal_debug_log("Failed to create render encoder");
-            return false;
-        }
-
-        // Set the render pipeline state
-        [renderEncoder setRenderPipelineState:ctx->pipelineState];
-
-        // Set the vertex buffer
-        [renderEncoder setVertexBuffer:ctx->vertexBuffer offset:0 atIndex:0];
-
-        // Draw the triangle primitive
-        [renderEncoder drawPrimitives:MTLPrimitiveTypeTriangle
-                          vertexStart:0
-                          vertexCount:ctx->vertexCount];
-
-        // End encoding
+        
         [renderEncoder endEncoding];
-
-        // Present the drawable
         [commandBuffer presentDrawable:drawable];
-
-        // Commit the command buffer
         [commandBuffer commit];
-
-        metal_debug_log("Triangle rendering command submitted");
+        [commandBuffer waitUntilCompleted];
     }
-
+    
     return true;
 }
 
