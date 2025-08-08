@@ -27,7 +27,7 @@
 	https://github.com/HaxeFoundation/hashlink/wiki/
 **/
 
-#define HL_VERSION	0x010F00
+#define HL_VERSION	0x011000
 
 #if defined(_WIN32)
 #	define HL_WIN
@@ -231,13 +231,6 @@ typedef unsigned long long uint64;
 // -------------- UNICODE -----------------------------------
 
 #if defined(HL_WIN) && !defined(HL_LLVM)
-#if (defined(HL_WIN_DESKTOP) && !defined(HL_MINGW)) || defined(HL_XBS)
-#	include <Windows.h>
-#elif defined(HL_WIN_DESKTOP) && defined(HL_MINGW)
-#	include<windows.h>
-#else
-#	include <xdk.h>
-#endif
 #	include <wchar.h>
 typedef wchar_t	uchar;
 #	define USTR(str)	L##str
@@ -283,7 +276,7 @@ HL_API void uprintf( const uchar *fmt, const uchar *str );
 C_FUNCTION_END
 
 #if defined(HL_VCC)
-#	define hl_debug_break()	if( IsDebuggerPresent() ) __debugbreak()
+#	define hl_debug_break()	if( hl_detect_debugger() ) __debugbreak()
 #elif defined(HL_PS) && defined(_DEBUG)
 #	define hl_debug_break()	__debugbreak()
 #elif defined(HL_NX)
@@ -643,6 +636,7 @@ HL_API void hl_setup_longjump( void *j );
 HL_API void hl_setup_exception( void *resolve_symbol, void *capture_stack );
 HL_API void hl_dump_stack( void );
 HL_API bool hl_maybe_print_custom_stack( vdynamic *exc );
+HL_API void hl_print_uncaught_exception( vdynamic *exc );
 HL_API varray *hl_exception_stack( void );
 HL_API bool hl_detect_debugger( void );
 

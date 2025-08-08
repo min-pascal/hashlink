@@ -1,5 +1,6 @@
 #define HL_NAME(n) sdl_##n
 #include <hl.h>
+#include "hlsystem.h"
 
 #if defined(HL_IOS) || defined (HL_TVOS)
 #	include <SDL.h>
@@ -14,7 +15,7 @@
 #	define glMemoryBarrier(...) hl_error("Not supported on OSX")
 #elif defined(_WIN32)
 #	include <SDL.h>
-#	include <GL/GLU.h>
+#	include <GL/GL.h>
 #	include <glext.h>
 #elif defined(HL_CONSOLE)
 #	include <graphic/glapi.h>
@@ -24,13 +25,12 @@
 #	define HL_GLES
 #elif defined(HL_ANDROID)
 #	include <SDL.h>
-#	include <GLES3/gl3.h>
+#	include <GLES3/gl32.h>
 #	include <GLES3/gl3ext.h>
 #	define HL_GLES
 #else
 #	include <SDL2/SDL.h>
-#	include <GL/glu.h>
-#	include <GL/glext.h>
+#	include <GL/glcorearb.h>
 #endif
 
 #ifdef HL_GLES
@@ -42,6 +42,8 @@
 #	define glFramebufferTexture(...) ES_NOT_SUPPORTED
 #	define glDispatchCompute(...) ES_NOT_SUPPORTED
 #	define glMemoryBarrier(...) ES_NOT_SUPPORTED
+#	define glGetBufferSubData(...) ES_NOT_SUPPORTED
+#	define glShaderStorageBlockBinding(...) ES_NOT_SUPPORTED
 #	define glPolygonMode(face,mode) if( mode != 0x1B02 ) ES_NOT_SUPPORTED
 #	define glGetQueryObjectiv glGetQueryObjectuiv
 #	define glClearDepth glClearDepthf

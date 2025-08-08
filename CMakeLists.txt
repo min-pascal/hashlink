@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.13)
 
 set(HL_VERSION_MAJOR 1)
-set(HL_VERSION_MINOR 15)
+set(HL_VERSION_MINOR 16)
 set(HL_VERSION_PATCH 0)
 set(HL_VERSION ${HL_VERSION_MAJOR}.${HL_VERSION_MINOR}.${HL_VERSION_PATCH})
 
@@ -24,6 +24,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm|aarch64")
 endif()
 
 option(WITH_VM "Whether to build the Hashlink virtual machine" ${WITH_VM_DEFAULT})
+option(BUILD_SHARED_LIBS "Build using shared libraries" ON)
 
 # force Unicode over Multi-byte
 if(MSVC)
@@ -133,7 +134,7 @@ if(IOS_PLATFORM)
     )
 endif()
 
-add_library(libhl SHARED
+add_library(libhl
     ${pcre_srcs}
     src/gc.c
     ${std_srcs}
@@ -192,7 +193,13 @@ endif()
 if(WIN32)
     target_link_libraries(libhl ws2_32 user32)
 else()
-    target_link_libraries(libhl m dl pthread)
+    target_link_libraries(libhl m dl)
+
+    if(ANDROID)
+        target_link_libraries(libhl log)
+    else()
+        target_link_libraries(libhl pthread)
+    endif()
 endif()
 
 if(BUILD_TESTING)
@@ -315,6 +322,20 @@ if(BUILD_TESTING)
     target_link_libraries(uvsample
         libhl
         uv.hdll
+    )
+
+    #####################
+    # header_macro_clashes.c
+
+    add_executable(header_macro_clashes
+        ${CMAKE_SOURCE_DIR}/other/tests/header_macro_clashes/header_macro_clashes.c
+    )
+    set_target_properties(header_macro_clashes
+        PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/test/
+    )
+    target_link_libraries(header_macro_clashes
+        libhl
     )
 
     #####################
