@@ -61,3 +61,8 @@ option(WITH_HEAPS "Build heaps.hdll." ON)
 if(WITH_HEAPS)
     add_subdirectory(heaps)
 endif()
+
+option(WITH_METAL "Build metal.hdll." ON)
+if(WITH_METAL AND APPLE)
+    add_subdirectory(metal)
+endif()
