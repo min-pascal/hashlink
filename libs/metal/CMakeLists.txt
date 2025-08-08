@@ -1,27 +1,35 @@
-cmake_minimum_required(VERSION 3.1)
+cmake_minimum_required(VERSION 3.10)
+project(metal_hdll)
 
-if(APPLE)
-    set(CMAKE_MACOSX_RPATH ON)
+# Find SDL2
+find_package(SDL2 REQUIRED)
+include_directories(${SDL2_INCLUDE_DIRS})
 
-    add_library(metal.hdll SHARED metal.m)
+# Include HL headers
+include_directories(../../src)
 
-    target_include_directories(metal.hdll PRIVATE ${HL_INCLUDE_DIR})
+# Add the Metal library
+add_library(metal SHARED metal.m)
 
-    # Link Metal and other required frameworks
-    find_library(METAL_FRAMEWORK Metal REQUIRED)
-    find_library(FOUNDATION_FRAMEWORK Foundation REQUIRED)
-    find_library(QUARTZ_CORE_FRAMEWORK QuartzCore REQUIRED)
+# Set frameworks for Metal
+set_target_properties(metal PROPERTIES
+    LINK_FLAGS "-framework Metal -framework Foundation -framework QuartzCore -framework AppKit"
+)
 
-    target_link_libraries(metal.hdll
-        ${HL_LIBRARY}
-        ${METAL_FRAMEWORK}
-        ${FOUNDATION_FRAMEWORK}
-        ${QUARTZ_CORE_FRAMEWORK}
-    )
+# Link against HL and SDL2
+target_link_libraries(metal
+    ${CMAKE_SOURCE_DIR}/../../libhl.dylib
+    ${SDL2_LIBRARIES}
+)
 
-    set_target_properties(metal.hdll PROPERTIES
-        PREFIX ""
-        OUTPUT_NAME "metal"
-        SUFFIX ".hdll"
-    )
-endif()
+# Set output name to metal.hdll
+set_target_properties(metal PROPERTIES
+    PREFIX ""
+    OUTPUT_NAME "metal"
+    SUFFIX ".hdll"
+)
+
+# Copy to the hashlink root directory
+add_custom_command(TARGET metal POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:metal> ${CMAKE_SOURCE_DIR}/../../metal.hdll
+)
