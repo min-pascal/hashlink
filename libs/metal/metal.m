@@ -40,46 +40,49 @@ typedef struct {
     id<MTLRenderPipelineState> pipelineState;
     id<MTLBuffer> vertexBuffer;
     NSUInteger vertexCount;
+
+    // Support for argument buffers
+    id<MTLBuffer> argBuffer;
+    id<MTLBuffer> positionBuffer;
+    id<MTLBuffer> colorBuffer;
 } metal_context;
 
 static metal_context *ctx = NULL;
 
-// Metal shader source code as a string
+// Metal shader source code as a string with argument buffer support
 // This is the Metal shading language code for the vertex and fragment shaders
 static NSString *shaderSource = @"\
 #include <metal_stdlib>\n\
 using namespace metal;\n\
 \n\
-// Define the vertex input structure to match our C struct\n\
-struct VertexInput {\n\
-    float3 position [[attribute(0)]];\n\
-    float4 color [[attribute(1)]];\n\
+// Define the data structure for the argument buffer\n\
+struct VertexData {\n\
+    device float3* positions [[id(0)]];\n\
+    device float3* colors [[id(1)]];\n\
 };\n\
 \n\
 // Define the output of the vertex shader, which is the input to the fragment shader\n\
 struct RasterizerData {\n\
     float4 position [[position]];\n\
-    float4 color;\n\
+    float3 color;\n\
 };\n\
 \n\
-// Vertex shader function\n\
+// Vertex shader function using argument buffer\n\
 vertex RasterizerData vertexShader(uint vertexID [[vertex_id]],\n\
-                                  constant VertexInput* vertices [[buffer(0)]]) {\n\
+                                  device const VertexData* vertexData [[buffer(0)]]) {\n\
     RasterizerData out;\n\
 \n\
-    // Pass the position directly (already in normalized device coordinates)\n\
-    out.position = float4(vertices[vertexID].position, 1.0);\n\
-\n\
-    // Pass the color directly to the fragment shader\n\
-    out.color = vertices[vertexID].color;\n\
+    // Get position and color from the argument buffer\n\
+    out.position = float4(vertexData->positions[vertexID], 1.0);\n\
+    out.color = float3(vertexData->colors[vertexID]);\n\
 \n\
     return out;\n\
 }\n\
 \n\
 // Fragment shader function\n\
 fragment float4 fragmentShader(RasterizerData in [[stage_in]]) {\n\
-    // Simply return the interpolated color\n\
-    return in.color;\n\
+    // Simply return the interpolated color with alpha = 1.0\n\
+    return float4(in.color, 1.0);\n\
 }\n\
 ";
 
@@ -161,7 +164,7 @@ bool metal_setup_pipeline(void) {
 // Standalone test function - independent of Heaps
 HL_PRIM void HL_NAME(test_window)(int r, int g, int b) {
     printf("Starting Metal standalone test...\n");
-    
+
     // Initialize SDL
     if (SDL_Init(SDL_INIT_VIDEO) < 0) {
         printf("SDL_Init failed: %s\n", SDL_GetError());
@@ -190,7 +193,7 @@ HL_PRIM void HL_NAME(test_window)(int r, int g, int b) {
             SDL_Quit();
             return;
         }
-        
+
         printf("Metal device created: %s\n", [[device name] UTF8String]);
 
         // Create SDL Metal view
@@ -238,7 +241,7 @@ HL_PRIM void HL_NAME(test_window)(int r, int g, int b) {
         // Main render loop
         bool running = true;
         SDL_Event event;
-        
+
         while (running) {
             // Handle SDL events
             while (SDL_PollEvent(&event)) {
@@ -271,7 +274,7 @@ HL_PRIM void HL_NAME(test_window)(int r, int g, int b) {
                 if (!commandBuffer) continue;
 
                 // Create render encoder
-                id<MTLRenderCommandEncoder> renderEncoder = 
+                id<MTLRenderCommandEncoder> renderEncoder =
                     [commandBuffer renderCommandEncoderWithDescriptor:renderPassDescriptor];
                 if (!renderEncoder) continue;
 
@@ -280,7 +283,7 @@ HL_PRIM void HL_NAME(test_window)(int r, int g, int b) {
 
                 // Present the drawable
                 [commandBuffer presentDrawable:drawable];
-                
+
                 // Commit the command buffer
                 [commandBuffer commit];
             }
@@ -295,7 +298,7 @@ HL_PRIM void HL_NAME(test_window)(int r, int g, int b) {
 
     SDL_DestroyWindow(window);
     SDL_Quit();
-    
+
     printf("Metal standalone test completed.\n");
 }
 
@@ -430,7 +433,7 @@ HL_PRIM bool HL_NAME(begin_render)(int r, int g, int b, int a) {
         }
 
         // Create render encoder
-        id<MTLRenderCommandEncoder> renderEncoder = 
+        id<MTLRenderCommandEncoder> renderEncoder =
             [commandBuffer renderCommandEncoderWithDescriptor:renderPassDescriptor];
         if (!renderEncoder) {
             metal_debug_log("Failed to create render encoder");
@@ -443,7 +446,7 @@ HL_PRIM bool HL_NAME(begin_render)(int r, int g, int b, int a) {
 
         // Present the drawable
         [commandBuffer presentDrawable:drawable];
-        
+
         // Commit the command buffer
         [commandBuffer commit];
         metal_debug_log("Command buffer committed");
@@ -516,10 +519,99 @@ HL_PRIM bool HL_NAME(create_triangle)(float* positions, float* colors, int verte
     return true;
 }
 
+// Create a triangle with argument buffers approach
+HL_PRIM bool HL_NAME(create_triangle_with_argbuffers)(float* positions, float* colors, int vertexCount) {
+    if (ctx == NULL || vertexCount <= 0) {
+        metal_debug_log("Cannot create triangle with argbuffers: ctx is NULL or invalid vertex count");
+        return false;
+    }
+
+    metal_debug_log("Creating triangle with argument buffers (%d vertices)", vertexCount);
+
+    @autoreleasepool {
+        // Calculate sizes for the position and color buffers
+        const size_t positionsDataSize = vertexCount * 3 * sizeof(float); // 3 floats per position
+        const size_t colorsDataSize = vertexCount * 3 * sizeof(float);    // 3 floats per color (RGB)
+
+        // Create separate buffers for positions and colors
+        ctx->positionBuffer = [ctx->device newBufferWithBytes:positions
+                                                      length:positionsDataSize
+                                                     options:MTLResourceStorageModeShared];
+
+        ctx->colorBuffer = [ctx->device newBufferWithBytes:colors
+                                                   length:colorsDataSize
+                                                  options:MTLResourceStorageModeShared];
+
+        if (!ctx->positionBuffer || !ctx->colorBuffer) {
+            metal_debug_log("Failed to create position or color buffer");
+            return false;
+        }
+
+        // Update render pipeline if needed
+        if (!ctx->pipelineState) {
+            if (!metal_setup_pipeline()) {
+                metal_debug_log("Failed to set up render pipeline");
+                return false;
+            }
+        }
+
+        // Get the vertex function to create the argument encoder
+        NSError *error = nil;
+        id<MTLLibrary> library = [ctx->device newLibraryWithSource:shaderSource
+                                                          options:nil
+                                                            error:&error];
+        if (!library) {
+            metal_debug_log("Failed to create shader library for argument encoder: %s", 
+                           error ? [[error localizedDescription] UTF8String] : "Unknown error");
+            return false;
+        }
+
+        id<MTLFunction> vertexFunction = [library newFunctionWithName:@"vertexShader"];
+        if (!vertexFunction) {
+            metal_debug_log("Failed to get vertex function for argument encoder");
+            return false;
+        }
+
+        // Check if the function supports argument encoders
+        if (![vertexFunction respondsToSelector:@selector(newArgumentEncoderWithBufferIndex:)]) {
+            metal_debug_log("Function does not support argument encoders - using fallback");
+            // Fallback: just store the buffers without argument encoder
+            ctx->vertexCount = vertexCount;
+            return true;
+        }
+
+        // Create the argument encoder for buffer 0 (our VertexData struct)
+        id<MTLArgumentEncoder> argEncoder = [vertexFunction newArgumentEncoderWithBufferIndex:0];
+        if (!argEncoder) {
+            metal_debug_log("Failed to create argument encoder");
+            return false;
+        }
+
+        // Create the argument buffer
+        ctx->argBuffer = [ctx->device newBufferWithLength:argEncoder.encodedLength
+                                                options:MTLResourceStorageModeShared];
+        if (!ctx->argBuffer) {
+            metal_debug_log("Failed to create argument buffer");
+            return false;
+        }
+
+        // Encode the argument buffer
+        [argEncoder setArgumentBuffer:ctx->argBuffer offset:0];
+        [argEncoder setBuffer:ctx->positionBuffer offset:0 atIndex:0]; // positions at index 0
+        [argEncoder setBuffer:ctx->colorBuffer offset:0 atIndex:1];    // colors at index 1
+
+        // Store vertex count for rendering
+        ctx->vertexCount = vertexCount;
+
+        metal_debug_log("Triangle with argument buffers created successfully");
+        return true;
+    }
+}
+
 // Render the triangle - updated version of begin_render that includes triangle rendering
 HL_PRIM bool HL_NAME(render_triangle)(int r, int g, int b, int a) {
     if (ctx == NULL || !ctx->windowSetup) return false;
-    
+
     @autoreleasepool {
         // Get the next drawable from the layer
         id<CAMetalDrawable> drawable = [ctx->layer nextDrawable];
@@ -527,13 +619,13 @@ HL_PRIM bool HL_NAME(render_triangle)(int r, int g, int b, int a) {
 
         // Create command buffer
         id<MTLCommandBuffer> commandBuffer = [ctx->commandQueue commandBuffer];
-        
+
         // Set up render pass descriptor with clear color
         MTLRenderPassDescriptor *renderPassDescriptor = [MTLRenderPassDescriptor renderPassDescriptor];
         renderPassDescriptor.colorAttachments[0].texture = drawable.texture;
         renderPassDescriptor.colorAttachments[0].loadAction = MTLLoadActionClear;
         renderPassDescriptor.colorAttachments[0].storeAction = MTLStoreActionStore;
-        
+
         // Set clear color (convert from 0-255 int to 0.0-1.0 float)
         renderPassDescriptor.colorAttachments[0].clearColor = MTLClearColorMake(
             r / 255.0, g / 255.0, b / 255.0, a / 255.0
@@ -541,20 +633,81 @@ HL_PRIM bool HL_NAME(render_triangle)(int r, int g, int b, int a) {
 
         // Create render command encoder
         id<MTLRenderCommandEncoder> renderEncoder = [commandBuffer renderCommandEncoderWithDescriptor:renderPassDescriptor];
-        
+
         // Render triangle if we have vertex data
         if (ctx->pipelineState && ctx->vertexBuffer && ctx->vertexCount > 0) {
             [renderEncoder setRenderPipelineState:ctx->pipelineState];
             [renderEncoder setVertexBuffer:ctx->vertexBuffer offset:0 atIndex:0];
             [renderEncoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:ctx->vertexCount];
         }
-        
+
         [renderEncoder endEncoding];
         [commandBuffer presentDrawable:drawable];
         [commandBuffer commit];
         [commandBuffer waitUntilCompleted];
     }
-    
+
+    return true;
+}
+
+// Render the triangle using argument buffers
+HL_PRIM bool HL_NAME(render_triangle_with_argbuffers)(int r, int g, int b, int a) {
+    if (ctx == NULL || !ctx->windowSetup) {
+        metal_debug_log("Cannot render with argument buffers: ctx is NULL or window not set up");
+        return false;
+    }
+
+    if (!ctx->argBuffer || !ctx->positionBuffer || !ctx->colorBuffer) {
+        metal_debug_log("Cannot render with argument buffers: buffers not initialized");
+        return false;
+    }
+
+    @autoreleasepool {
+        // Get the next drawable from the layer
+        id<CAMetalDrawable> drawable = [ctx->layer nextDrawable];
+        if (!drawable) return false;
+
+        // Create command buffer
+        id<MTLCommandBuffer> commandBuffer = [ctx->commandQueue commandBuffer];
+
+        // Set up render pass descriptor with clear color
+        MTLRenderPassDescriptor *renderPassDescriptor = [MTLRenderPassDescriptor renderPassDescriptor];
+        renderPassDescriptor.colorAttachments[0].texture = drawable.texture;
+        renderPassDescriptor.colorAttachments[0].loadAction = MTLLoadActionClear;
+        renderPassDescriptor.colorAttachments[0].storeAction = MTLStoreActionStore;
+
+        // Set clear color (convert from 0-255 int to 0.0-1.0 float)
+        renderPassDescriptor.colorAttachments[0].clearColor = MTLClearColorMake(
+            r / 255.0, g / 255.0, b / 255.0, a / 255.0
+        );
+
+        // Create render command encoder
+        id<MTLRenderCommandEncoder> renderEncoder = [commandBuffer renderCommandEncoderWithDescriptor:renderPassDescriptor];
+
+        // Render triangle using argument buffers
+        if (ctx->pipelineState && ctx->vertexCount > 0) {
+            // Set the render pipeline state
+            [renderEncoder setRenderPipelineState:ctx->pipelineState];
+
+            // Set the argument buffer
+            [renderEncoder setVertexBuffer:ctx->argBuffer offset:0 atIndex:0];
+
+            // Use the resources that the argument buffer refers to
+            [renderEncoder useResource:ctx->positionBuffer usage:MTLResourceUsageRead stages:MTLRenderStageVertex];
+            [renderEncoder useResource:ctx->colorBuffer usage:MTLResourceUsageRead stages:MTLRenderStageVertex];
+
+            // Draw the triangle
+            [renderEncoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:ctx->vertexCount];
+
+            metal_debug_log("Triangle rendered with argument buffers");
+        }
+
+        [renderEncoder endEncoding];
+        [commandBuffer presentDrawable:drawable];
+        [commandBuffer commit];
+        [commandBuffer waitUntilCompleted];
+    }
+
     return true;
 }
 
@@ -665,7 +818,7 @@ HL_PRIM void HL_NAME(shutdown)(void) {
     }
 }
 
-// Export Hashlink functions
+// Export Hashlink functions to be exposed MetalDriver.hx ---------------------------------
 DEFINE_PRIM(_VOID, init, _NO_ARG);
 DEFINE_PRIM(_BOOL, setup_window, _DYN);
 DEFINE_PRIM(_BOOL, begin_render, _I32 _I32 _I32 _I32);
@@ -676,3 +829,5 @@ DEFINE_PRIM(_VOID, test_window, _I32 _I32 _I32);  // Test function
 DEFINE_PRIM(_BOOL, create_triangle, _BYTES _BYTES _I32);  // Triangle creation function
 DEFINE_PRIM(_BOOL, render_triangle, _I32 _I32 _I32 _I32); // Triangle rendering function
 DEFINE_PRIM(_BOOL, update_buffer, _DYN _BYTES _I32 _I32); // Buffer update function the interest rates don't come down
+DEFINE_PRIM(_BOOL, create_triangle_with_argbuffers, _BYTES _BYTES _I32);
+DEFINE_PRIM(_BOOL, render_triangle_with_argbuffers, _I32 _I32 _I32 _I32);
