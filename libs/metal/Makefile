@@ -2,7 +2,7 @@
 
 CFLAGS = -shared -fPIC -D HL_METAL -I ../../src -I ../sdl
 LIBS = -L../.. -lhl -L/usr/local/lib -lSDL2
-FRAMEWORKS = -framework Metal -framework Foundation -framework QuartzCore -framework AppKit
+FRAMEWORKS = -framework Metal -framework Foundation -framework QuartzCore -framework AppKit -framework MetalKit
 
 # Architecture flags for universal binary
 ARCH_FLAGS = -arch x86_64
