@@ -7,6 +7,7 @@
 #include <QuartzCore/CAMetalLayer.h>
 
 #define DEBUG_FILE "/tmp/metal_debug.log"
+#define MAX_FRAMES_IN_FLIGHT 3
 
 // Helper function to write debug messages to a file
 void metal_debug_log(const char* message, ...) {
@@ -28,6 +29,11 @@ typedef struct {
     float color[4];
 } metal_vertex;
 
+// Frame data structure for animation
+typedef struct {
+    float angle;
+} frame_data;
+
 typedef struct {
     id<MTLDevice> device;
     id<MTLCommandQueue> commandQueue;
@@ -45,12 +51,18 @@ typedef struct {
     id<MTLBuffer> argBuffer;
     id<MTLBuffer> positionBuffer;
     id<MTLBuffer> colorBuffer;
+
+    // Animation support
+    float angle;
+    id<MTLBuffer> frameDataBuffer;
+    dispatch_semaphore_t frameSemaphore;
+    int frameIndex;
+    id<MTLBuffer> frameDataBuffers[MAX_FRAMES_IN_FLIGHT];
 } metal_context;
 
 static metal_context *ctx = NULL;
 
-// Metal shader source code as a string with argument buffer support
-// This is the Metal shading language code for the vertex and fragment shaders
+// Metal shader source code with animation support - reverted to original
 static NSString *shaderSource = @"\
 #include <metal_stdlib>\n\
 using namespace metal;\n\
@@ -61,19 +73,34 @@ struct VertexData {\n\
     device float3* colors [[id(1)]];\n\
 };\n\
 \n\
+// Frame data for animation\n\
+struct FrameData {\n\
+    float angle;\n\
+};\n\
+\n\
 // Define the output of the vertex shader, which is the input to the fragment shader\n\
 struct RasterizerData {\n\
     float4 position [[position]];\n\
     float3 color;\n\
 };\n\
 \n\
-// Vertex shader function using argument buffer\n\
+// Vertex shader function using argument buffer with animation\n\
 vertex RasterizerData vertexShader(uint vertexID [[vertex_id]],\n\
-                                  device const VertexData* vertexData [[buffer(0)]]) {\n\
+                                  device const VertexData* vertexData [[buffer(0)]],\n\
+                                  constant FrameData* frameData [[buffer(1)]]) {\n\
     RasterizerData out;\n\
 \n\
-    // Get position and color from the argument buffer\n\
-    out.position = float4(vertexData->positions[vertexID], 1.0);\n\
+    // Create rotation matrix for clockwise rotation\n\
+    float a = frameData->angle;\n\
+    float3x3 rotationMatrix = float3x3(\n\
+        sin(a), cos(a), 0.0,\n\
+        cos(a), -sin(a), 0.0,\n\
+        0.0, 0.0, 1.0\n\
+    );\n\
+\n\
+    // Apply rotation to the vertex position\n\
+    float3 rotatedPosition = rotationMatrix * vertexData->positions[vertexID];\n\
+    out.position = float4(rotatedPosition, 1.0);\n\
     out.color = float3(vertexData->colors[vertexID]);\n\
 \n\
     return out;\n\
@@ -90,7 +117,7 @@ fragment float4 fragmentShader(RasterizerData in [[stage_in]]) {\n\
 bool metal_setup_pipeline(void) {
     if (ctx == NULL || !ctx->windowSetup) return false;
 
-    metal_debug_log("Setting up Metal render pipeline for triangles");
+    metal_debug_log("Setting up Metal render pipeline for animated triangles");
 
     @autoreleasepool {
         // Create a library from the shader source
@@ -156,6 +183,32 @@ bool metal_setup_pipeline(void) {
         }
 
         metal_debug_log("Render pipeline created successfully");
+    }
+
+    return true;
+}
+
+// Setup frame data buffers for animation
+bool metal_setup_frame_data(void) {
+    if (ctx == NULL) return false;
+
+    @autoreleasepool {
+        // Create frame data buffers for triple buffering
+        for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+            ctx->frameDataBuffers[i] = [ctx->device newBufferWithLength:sizeof(frame_data)
+                                                                options:MTLResourceStorageModeShared];
+            if (!ctx->frameDataBuffers[i]) {
+                metal_debug_log("Failed to create frame data buffer %d", i);
+                return false;
+            }
+        }
+
+        // Create dispatch semaphore for frame synchronization
+        ctx->frameSemaphore = dispatch_semaphore_create(MAX_FRAMES_IN_FLIGHT);
+        ctx->frameIndex = 0;
+        ctx->angle = 0.0f;
+
+        metal_debug_log("Frame data buffers created successfully");
     }
 
     return true;
@@ -336,6 +389,10 @@ HL_PRIM void HL_NAME(init)(void) {
         }
         metal_debug_log("Metal command queue created");
 
+        // Initialize animation state
+        ctx->angle = 0.0f;
+        ctx->frameIndex = 0;
+        
         // Don't create render pass descriptor here - create it fresh each frame
         ctx->windowSetup = false;
         metal_debug_log("Metal init complete");
@@ -384,6 +441,12 @@ HL_PRIM bool HL_NAME(setup_window)(vdynamic *win) {
         SDL_GetWindowSize(window, &width, &height);
         ctx->layer.drawableSize = CGSizeMake(width, height);
         metal_debug_log("Metal layer configured with size %d x %d", width, height);
+
+        // Setup frame data for animation
+        if (!metal_setup_frame_data()) {
+            metal_debug_log("Failed to setup frame data");
+            return false;
+        }
 
         ctx->windowSetup = true;
         metal_debug_log("Window setup complete");
@@ -650,7 +713,7 @@ HL_PRIM bool HL_NAME(render_triangle)(int r, int g, int b, int a) {
     return true;
 }
 
-// Render the triangle using argument buffers
+// Render the triangle using argument buffers with animation
 HL_PRIM bool HL_NAME(render_triangle_with_argbuffers)(int r, int g, int b, int a) {
     if (ctx == NULL || !ctx->windowSetup) {
         metal_debug_log("Cannot render with argument buffers: ctx is NULL or window not set up");
@@ -663,12 +726,34 @@ HL_PRIM bool HL_NAME(render_triangle_with_argbuffers)(int r, int g, int b, int a
     }
 
     @autoreleasepool {
+        // Wait for available frame buffer
+        dispatch_semaphore_wait(ctx->frameSemaphore, DISPATCH_TIME_FOREVER);
+        
+        // Update frame index
+        ctx->frameIndex = (ctx->frameIndex + 1) % MAX_FRAMES_IN_FLIGHT;
+        id<MTLBuffer> currentFrameDataBuffer = ctx->frameDataBuffers[ctx->frameIndex];
+
+        // Update animation angle
+        ctx->angle += 0.01f;
+        
+        // Update frame data buffer with new angle
+        frame_data* frameData = (frame_data*)currentFrameDataBuffer.contents;
+        frameData->angle = ctx->angle;
+
         // Get the next drawable from the layer
         id<CAMetalDrawable> drawable = [ctx->layer nextDrawable];
-        if (!drawable) return false;
+        if (!drawable) {
+            dispatch_semaphore_signal(ctx->frameSemaphore);
+            return false;
+        }
 
         // Create command buffer
         id<MTLCommandBuffer> commandBuffer = [ctx->commandQueue commandBuffer];
+        
+        // Add completion handler to signal semaphore when command buffer completes
+        [commandBuffer addCompletedHandler:^(id<MTLCommandBuffer> buffer) {
+            dispatch_semaphore_signal(ctx->frameSemaphore);
+        }];
 
         // Set up render pass descriptor with clear color
         MTLRenderPassDescriptor *renderPassDescriptor = [MTLRenderPassDescriptor renderPassDescriptor];
@@ -689,8 +774,11 @@ HL_PRIM bool HL_NAME(render_triangle_with_argbuffers)(int r, int g, int b, int a
             // Set the render pipeline state
             [renderEncoder setRenderPipelineState:ctx->pipelineState];
 
-            // Set the argument buffer
+            // Set the argument buffer (VertexData)
             [renderEncoder setVertexBuffer:ctx->argBuffer offset:0 atIndex:0];
+            
+            // Set the frame data buffer
+            [renderEncoder setVertexBuffer:currentFrameDataBuffer offset:0 atIndex:1];
 
             // Use the resources that the argument buffer refers to
             [renderEncoder useResource:ctx->positionBuffer usage:MTLResourceUsageRead stages:MTLRenderStageVertex];
@@ -699,13 +787,12 @@ HL_PRIM bool HL_NAME(render_triangle_with_argbuffers)(int r, int g, int b, int a
             // Draw the triangle
             [renderEncoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:ctx->vertexCount];
 
-            metal_debug_log("Triangle rendered with argument buffers");
+            metal_debug_log("Animated triangle rendered with argument buffers (angle: %f)", ctx->angle);
         }
 
         [renderEncoder endEncoding];
         [commandBuffer presentDrawable:drawable];
         [commandBuffer commit];
-        [commandBuffer waitUntilCompleted];
     }
 
     return true;
