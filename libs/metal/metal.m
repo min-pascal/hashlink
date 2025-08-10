@@ -230,12 +230,9 @@ HL_PRIM bool HL_NAME(create_instanced_rectangles)(void) {
             {{ -s, +s, 0.0f }}   // Top left
         };
 
-        // Create indices for 2 triangles to form a complete rectangle
-        // Triangle 1: (0,1,2) = bottom-left, bottom-right, top-right
-        // Triangle 2: (2,3,0) = top-right, top-left, bottom-left
         uint16_t indices[] = {
             0, 1, 2,  // First triangle
-            2, 3, 0   // Second triangle
+            2, 3, 1   // Second triangle
         };
 
         metal_debug_log("Creating rectangle with 4 vertices and 6 indices (2 triangles)");
