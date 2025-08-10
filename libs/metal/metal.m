@@ -5,6 +5,7 @@
 #include <SDL2/SDL_metal.h>
 #include <Metal/Metal.h>
 #include <QuartzCore/CAMetalLayer.h>
+#include <simd/simd.h>  // ADD this include for simd types
 
 #define DEBUG_FILE "/tmp/metal_debug.log"
 #define MAX_FRAMES_IN_FLIGHT 3
@@ -34,6 +35,13 @@ typedef struct {
     float angle;
 } frame_data;
 
+static const size_t kNumInstances = 32;
+
+typedef struct {
+    simd_float4x4 instanceTransform;
+    simd_float4 instanceColor;
+} metal_instance_data;
+
 typedef struct {
     id<MTLDevice> device;
     id<MTLCommandQueue> commandQueue;
@@ -58,6 +66,14 @@ typedef struct {
     dispatch_semaphore_t frameSemaphore;
     int frameIndex;
     id<MTLBuffer> frameDataBuffers[MAX_FRAMES_IN_FLIGHT];
+
+    // ADD: Instancing support fields
+    id<MTLBuffer> instanceDataBuffers[MAX_FRAMES_IN_FLIGHT];
+    id<MTLBuffer> instanceIndexBuffer;  // Renamed to avoid conflict with existing indexBuffer
+    id<MTLBuffer> instanceVertexBuffer;  // Separate buffer for instancing
+    id<MTLRenderPipelineState> instancingPipelineState;
+    NSUInteger instanceIndexCount;
+    NSUInteger instanceVertexCount;
 } metal_context;
 
 static metal_context *ctx = NULL;
@@ -112,6 +128,252 @@ fragment float4 fragmentShader(RasterizerData in [[stage_in]]) {\n\
     return float4(in.color, 1.0);\n\
 }\n\
 ";
+
+
+// Add instancing shader source
+static NSString *instancingShaderSource = @"\
+#include <metal_stdlib>\n\
+using namespace metal;\n\
+\n\
+struct VertexData {\n\
+    float3 position;\n\
+};\n\
+\n\
+struct InstanceData {\n\
+    float4x4 instanceTransform;\n\
+    float4 instanceColor;\n\
+};\n\
+\n\
+struct RasterizerData {\n\
+    float4 position [[position]];\n\
+    half3 color;\n\
+};\n\
+\n\
+vertex RasterizerData instancingVertexShader(device const VertexData* vertexData [[buffer(0)]],\n\
+                                            device const InstanceData* instanceData [[buffer(1)]],\n\
+                                            uint vertexId [[vertex_id]],\n\
+                                            uint instanceId [[instance_id]]) {\n\
+    RasterizerData out;\n\
+    float4 pos = float4(vertexData[vertexId].position, 1.0);\n\
+    out.position = instanceData[instanceId].instanceTransform * pos;\n\
+    out.color = half3(instanceData[instanceId].instanceColor.rgb);\n\
+    return out;\n\
+}\n\
+\n\
+fragment half4 instancingFragmentShader(RasterizerData in [[stage_in]]) {\n\
+    return half4(in.color, 1.0);\n\
+}\n\
+";
+
+// Add function to setup instancing pipeline
+bool metal_setup_instancing_pipeline(void) {
+    if (ctx == NULL || !ctx->windowSetup) return false;
+
+    metal_debug_log("Setting up Metal instancing pipeline");
+
+    @autoreleasepool {
+        NSError *error = nil;
+        id<MTLLibrary> library = [ctx->device newLibraryWithSource:instancingShaderSource
+                                                          options:nil
+                                                            error:&error];
+        if (!library) {
+            metal_debug_log("Failed to create instancing shader library: %s",
+                           error ? [[error localizedDescription] UTF8String] : "Unknown error");
+            return false;
+        }
+
+        id<MTLFunction> vertexFunction = [library newFunctionWithName:@"instancingVertexShader"];
+        id<MTLFunction> fragmentFunction = [library newFunctionWithName:@"instancingFragmentShader"];
+
+        if (!vertexFunction || !fragmentFunction) {
+            metal_debug_log("Failed to get instancing shader functions");
+            return false;
+        }
+
+        MTLRenderPipelineDescriptor *pipelineDescriptor = [[MTLRenderPipelineDescriptor alloc] init];
+        pipelineDescriptor.vertexFunction = vertexFunction;
+        pipelineDescriptor.fragmentFunction = fragmentFunction;
+        pipelineDescriptor.colorAttachments[0].pixelFormat = ctx->layer.pixelFormat;
+
+        ctx->instancingPipelineState = [ctx->device newRenderPipelineStateWithDescriptor:pipelineDescriptor
+                                                                                  error:&error];
+        if (!ctx->instancingPipelineState) {
+            metal_debug_log("Failed to create instancing pipeline state: %s",
+                           error ? [[error localizedDescription] UTF8String] : "Unknown error");
+            return false;
+        }
+
+        metal_debug_log("Instancing pipeline created successfully");
+    }
+
+    return true;
+}
+
+// ADD function to create rectangle geometry and instance data
+HL_PRIM bool HL_NAME(create_instanced_rectangles)(void) {
+    if (ctx == NULL) return false;
+
+    metal_debug_log("Creating instanced rectangles");
+
+    @autoreleasepool {
+        // Create rectangle vertices (4 vertices for a quad) - FIXED positioning
+        const float s = 0.5f;
+        typedef struct {
+            float position[3];
+        } vertex_data;
+
+        // Rectangle vertices that form a proper square
+        vertex_data vertices[] = {
+            {{ -s, -s, 0.0f }},  // Bottom left
+            {{ +s, -s, 0.0f }},  // Bottom right  
+            {{ +s, +s, 0.0f }},  // Top right
+            {{ -s, +s, 0.0f }}   // Top left
+        };
+
+        // Create indices for 2 triangles to form a complete rectangle
+        // Triangle 1: (0,1,2) = bottom-left, bottom-right, top-right
+        // Triangle 2: (2,3,0) = top-right, top-left, bottom-left
+        uint16_t indices[] = {
+            0, 1, 2,  // First triangle
+            2, 3, 0   // Second triangle
+        };
+
+        metal_debug_log("Creating rectangle with 4 vertices and 6 indices (2 triangles)");
+
+        // Create vertex buffer for instancing (separate from triangle buffer)
+        ctx->instanceVertexBuffer = [ctx->device newBufferWithBytes:vertices
+                                                            length:sizeof(vertices)
+                                                           options:MTLResourceStorageModeShared];
+
+        // Create index buffer for instancing
+        ctx->instanceIndexBuffer = [ctx->device newBufferWithBytes:indices
+                                                           length:sizeof(indices)
+                                                          options:MTLResourceStorageModeShared];
+
+        if (!ctx->instanceVertexBuffer || !ctx->instanceIndexBuffer) {
+            metal_debug_log("Failed to create instance vertex or index buffers");
+            return false;
+        }
+
+        ctx->instanceVertexCount = 4;
+        ctx->instanceIndexCount = 6;  // Make sure this is 6, not 3!
+
+        metal_debug_log("Created rectangle geometry: %lu vertices, %lu indices", 
+                       ctx->instanceVertexCount, ctx->instanceIndexCount);
+
+        // Create instance data buffers for triple buffering
+        for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+            ctx->instanceDataBuffers[i] = [ctx->device newBufferWithLength:kNumInstances * sizeof(metal_instance_data)
+                                                                   options:MTLResourceStorageModeShared];
+            if (!ctx->instanceDataBuffers[i]) {
+                metal_debug_log("Failed to create instance data buffer %d", i);
+                return false;
+            }
+        }
+
+        // Setup instancing pipeline if needed
+        if (!ctx->instancingPipelineState) {
+            if (!metal_setup_instancing_pipeline()) {
+                metal_debug_log("Failed to setup instancing pipeline");
+                return false;
+            }
+        }
+
+        metal_debug_log("Instanced rectangles created successfully - each instance will draw 2 triangles forming a rectangle");
+    }
+
+    return true;
+}
+
+// ADD function to render instanced rectangles
+HL_PRIM bool HL_NAME(render_instanced_rectangles)(int r, int g, int b, int a) {
+    if (ctx == NULL || !ctx->windowSetup) return false;
+
+    @autoreleasepool {
+        // Wait for available frame buffer
+        dispatch_semaphore_wait(ctx->frameSemaphore, DISPATCH_TIME_FOREVER);
+
+        // Update frame index
+        ctx->frameIndex = (ctx->frameIndex + 1) % MAX_FRAMES_IN_FLIGHT;
+        id<MTLBuffer> currentInstanceBuffer = ctx->instanceDataBuffers[ctx->frameIndex];
+
+        // Update animation angle
+        ctx->angle += 0.01f;
+
+        // Update instance data
+        metal_instance_data* instanceData = (metal_instance_data*)currentInstanceBuffer.contents;
+        const float scl = 0.1f;
+
+        for (size_t i = 0; i < kNumInstances; ++i) {
+            float iDivNumInstances = i / (float)kNumInstances;
+            float xoff = (iDivNumInstances * 2.0f - 1.0f) + (1.f/kNumInstances);
+            float yoff = sin((iDivNumInstances + ctx->angle) * 2.0f * M_PI);
+
+            // Create rotation and translation matrix
+            simd_float4x4 transform = simd_matrix(
+                simd_make_float4(scl * sin(ctx->angle), scl * cos(ctx->angle), 0.f, 0.f),
+                simd_make_float4(scl * cos(ctx->angle), scl * -sin(ctx->angle), 0.f, 0.f),
+                simd_make_float4(0.f, 0.f, scl, 0.f),
+                simd_make_float4(xoff, yoff, 0.f, 1.f)
+            );
+
+            instanceData[i].instanceTransform = transform;
+
+            // Create instance color
+            float red = iDivNumInstances;
+            float green = 1.0f - red;
+            float blue = sin(M_PI * 2.0f * iDivNumInstances);
+            instanceData[i].instanceColor = simd_make_float4(red, green, blue, 1.0f);
+        }
+
+        // Get next drawable
+        id<CAMetalDrawable> drawable = [ctx->layer nextDrawable];
+        if (!drawable) {
+            dispatch_semaphore_signal(ctx->frameSemaphore);
+            return false;
+        }
+
+        // Create command buffer
+        id<MTLCommandBuffer> commandBuffer = [ctx->commandQueue commandBuffer];
+
+        // Add completion handler
+        [commandBuffer addCompletedHandler:^(id<MTLCommandBuffer> buffer) {
+            dispatch_semaphore_signal(ctx->frameSemaphore);
+        }];
+
+        // Create render pass descriptor
+        MTLRenderPassDescriptor *renderPassDescriptor = [MTLRenderPassDescriptor renderPassDescriptor];
+        renderPassDescriptor.colorAttachments[0].texture = drawable.texture;
+        renderPassDescriptor.colorAttachments[0].loadAction = MTLLoadActionClear;
+        renderPassDescriptor.colorAttachments[0].storeAction = MTLStoreActionStore;
+        renderPassDescriptor.colorAttachments[0].clearColor = MTLClearColorMake(
+            r / 255.0, g / 255.0, b / 255.0, a / 255.0
+        );
+
+        // Create render encoder
+        id<MTLRenderCommandEncoder> renderEncoder = [commandBuffer renderCommandEncoderWithDescriptor:renderPassDescriptor];
+
+        // Render instanced rectangles
+        if (ctx->instancingPipelineState && ctx->instanceVertexBuffer && ctx->instanceIndexBuffer) {
+            [renderEncoder setRenderPipelineState:ctx->instancingPipelineState];
+            [renderEncoder setVertexBuffer:ctx->instanceVertexBuffer offset:0 atIndex:0];
+            [renderEncoder setVertexBuffer:currentInstanceBuffer offset:0 atIndex:1];
+
+            [renderEncoder drawIndexedPrimitives:MTLPrimitiveTypeTriangle
+                                      indexCount:ctx->instanceIndexCount
+                                       indexType:MTLIndexTypeUInt16
+                                     indexBuffer:ctx->instanceIndexBuffer
+                               indexBufferOffset:0
+                                   instanceCount:kNumInstances];
+        }
+
+        [renderEncoder endEncoding];
+        [commandBuffer presentDrawable:drawable];
+        [commandBuffer commit];
+    }
+
+    return true;
+}
 
 // Function to create the render pipeline for triangle rendering
 bool metal_setup_pipeline(void) {
@@ -624,7 +886,7 @@ HL_PRIM bool HL_NAME(create_triangle_with_argbuffers)(float* positions, float* c
                                                           options:nil
                                                             error:&error];
         if (!library) {
-            metal_debug_log("Failed to create shader library for argument encoder: %s", 
+            metal_debug_log("Failed to create shader library for argument encoder: %s",
                            error ? [[error localizedDescription] UTF8String] : "Unknown error");
             return false;
         }
@@ -728,14 +990,14 @@ HL_PRIM bool HL_NAME(render_triangle_with_argbuffers)(int r, int g, int b, int a
     @autoreleasepool {
         // Wait for available frame buffer
         dispatch_semaphore_wait(ctx->frameSemaphore, DISPATCH_TIME_FOREVER);
-        
+
         // Update frame index
         ctx->frameIndex = (ctx->frameIndex + 1) % MAX_FRAMES_IN_FLIGHT;
         id<MTLBuffer> currentFrameDataBuffer = ctx->frameDataBuffers[ctx->frameIndex];
 
         // Update animation angle
         ctx->angle += 0.01f;
-        
+
         // Update frame data buffer with new angle
         frame_data* frameData = (frame_data*)currentFrameDataBuffer.contents;
         frameData->angle = ctx->angle;
@@ -749,7 +1011,7 @@ HL_PRIM bool HL_NAME(render_triangle_with_argbuffers)(int r, int g, int b, int a
 
         // Create command buffer
         id<MTLCommandBuffer> commandBuffer = [ctx->commandQueue commandBuffer];
-        
+
         // Add completion handler to signal semaphore when command buffer completes
         [commandBuffer addCompletedHandler:^(id<MTLCommandBuffer> buffer) {
             dispatch_semaphore_signal(ctx->frameSemaphore);
@@ -776,7 +1038,7 @@ HL_PRIM bool HL_NAME(render_triangle_with_argbuffers)(int r, int g, int b, int a
 
             // Set the argument buffer (VertexData)
             [renderEncoder setVertexBuffer:ctx->argBuffer offset:0 atIndex:0];
-            
+
             // Set the frame data buffer
             [renderEncoder setVertexBuffer:currentFrameDataBuffer offset:0 atIndex:1];
 
@@ -912,9 +1174,10 @@ DEFINE_PRIM(_BOOL, begin_render, _I32 _I32 _I32 _I32);
 DEFINE_PRIM(_DYN, alloc_buffer, _I32 _I32);
 DEFINE_PRIM(_VOID, dispose_buffer, _DYN);
 DEFINE_PRIM(_VOID, shutdown, _NO_ARG);
-DEFINE_PRIM(_VOID, test_window, _I32 _I32 _I32);  // Test function
 DEFINE_PRIM(_BOOL, create_triangle, _BYTES _BYTES _I32);  // Triangle creation function
 DEFINE_PRIM(_BOOL, render_triangle, _I32 _I32 _I32 _I32); // Triangle rendering function
-DEFINE_PRIM(_BOOL, update_buffer, _DYN _BYTES _I32 _I32); // Buffer update function the interest rates don't come down
+DEFINE_PRIM(_BOOL, update_buffer, _DYN _BYTES _I32 _I32); // Buffer update function
 DEFINE_PRIM(_BOOL, create_triangle_with_argbuffers, _BYTES _BYTES _I32);
 DEFINE_PRIM(_BOOL, render_triangle_with_argbuffers, _I32 _I32 _I32 _I32);
+DEFINE_PRIM(_BOOL, create_instanced_rectangles, _NO_ARG);
+DEFINE_PRIM(_BOOL, render_instanced_rectangles, _I32 _I32 _I32 _I32);
