@@ -1,4 +1,3 @@
-
 #include "metal.h"
 
 // Metal shader source code with animation support
@@ -87,6 +86,49 @@ fragment half4 instancingFragmentShader(RasterizerData in [[stage_in]]) {\n\
 }\n\
 ";
 
+// Perspective shader source
+NSString *perspectiveShaderSource = @"\
+#include <metal_stdlib>\n\
+using namespace metal;\n\
+\n\
+struct VertexData {\n\
+    float3 position;\n\
+};\n\
+\n\
+struct InstanceData {\n\
+    float4x4 instanceTransform;\n\
+    float4 instanceColor;\n\
+};\n\
+\n\
+struct CameraData {\n\
+    float4x4 perspectiveTransform;\n\
+    float4x4 worldTransform;\n\
+};\n\
+\n\
+struct RasterizerData {\n\
+    float4 position [[position]];\n\
+    half3 color;\n\
+};\n\
+\n\
+vertex RasterizerData perspectiveVertexShader(device const VertexData* vertexData [[buffer(0)]],\n\
+                                            device const InstanceData* instanceData [[buffer(1)]],\n\
+                                            device const CameraData& cameraData [[buffer(2)]],\n\
+                                            uint vertexId [[vertex_id]],\n\
+                                            uint instanceId [[instance_id]]) {\n\
+    RasterizerData out;\n\
+    float4 pos = float4(vertexData[vertexId].position, 1.0);\n\
+    pos = instanceData[instanceId].instanceTransform * pos;\n\
+    pos = cameraData.perspectiveTransform * cameraData.worldTransform * pos;\n\
+    out.position = pos;\n\
+    out.color = half3(instanceData[instanceId].instanceColor.rgb);\n\
+    return out;\n\
+}\n\
+\n\
+fragment half4 perspectiveFragmentShader(RasterizerData in [[stage_in]]) {\n\
+    return half4(in.color, 1.0);\n\
+}\n\
+";
+
 bool metal_setup_pipeline(void) {
     if (ctx == NULL || !ctx->windowSetup) return false;
 
@@ -95,7 +137,7 @@ bool metal_setup_pipeline(void) {
     @autoreleasepool {
         id<MTLDevice> device = (__bridge id<MTLDevice>)ctx->device;
         CAMetalLayer* layer = (__bridge CAMetalLayer*)ctx->layer;
-        
+
         // Create a library from the shader source
         NSError *error = nil;
         id<MTLLibrary> library = [device newLibraryWithSource:shaderSource
@@ -207,6 +249,67 @@ bool metal_setup_instancing_pipeline(void) {
         
         ctx->instancingPipelineState = (__bridge_retained void*)instancingPipelineState;
         metal_debug_log("Instancing pipeline created successfully");
+    }
+
+    return true;
+}
+
+bool metal_setup_perspective_pipeline(void) {
+    if (ctx == NULL || !ctx->windowSetup) return false;
+
+    metal_debug_log("Setting up Metal perspective render pipeline");
+
+    @autoreleasepool {
+        id<MTLDevice> device = (__bridge id<MTLDevice>)ctx->device;
+        CAMetalLayer* layer = (__bridge CAMetalLayer*)ctx->layer;
+
+        NSError *error = nil;
+        id<MTLLibrary> library = [device newLibraryWithSource:perspectiveShaderSource
+                                                      options:nil
+                                                        error:&error];
+        if (!library) {
+            metal_debug_log("Failed to create perspective shader library: %s",
+                           error ? [[error localizedDescription] UTF8String] : "Unknown error");
+            return false;
+        }
+
+        id<MTLFunction> vertexFunction = [library newFunctionWithName:@"perspectiveVertexShader"];
+        id<MTLFunction> fragmentFunction = [library newFunctionWithName:@"perspectiveFragmentShader"];
+
+        if (!vertexFunction || !fragmentFunction) {
+            metal_debug_log("Failed to get perspective shader functions");
+            return false;
+        }
+
+        MTLRenderPipelineDescriptor *pipelineDescriptor = [[MTLRenderPipelineDescriptor alloc] init];
+        pipelineDescriptor.vertexFunction = vertexFunction;
+        pipelineDescriptor.fragmentFunction = fragmentFunction;
+        pipelineDescriptor.colorAttachments[0].pixelFormat = layer.pixelFormat;
+        pipelineDescriptor.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float; // Add depth format
+
+        id<MTLRenderPipelineState> perspectivePipelineState = [device newRenderPipelineStateWithDescriptor:pipelineDescriptor
+                                                                                                     error:&error];
+        if (!perspectivePipelineState) {
+            metal_debug_log("Failed to create perspective pipeline state: %s",
+                           error ? [[error localizedDescription] UTF8String] : "Unknown error");
+            return false;
+        }
+
+        ctx->perspectivePipelineState = (__bridge_retained void*)perspectivePipelineState;
+
+        // Create depth stencil state for 3D rendering
+        MTLDepthStencilDescriptor *depthStencilDescriptor = [[MTLDepthStencilDescriptor alloc] init];
+        depthStencilDescriptor.depthCompareFunction = MTLCompareFunctionLess;
+        depthStencilDescriptor.depthWriteEnabled = YES;
+
+        id<MTLDepthStencilState> depthStencilState = [device newDepthStencilStateWithDescriptor:depthStencilDescriptor];
+        if (!depthStencilState) {
+            metal_debug_log("Failed to create depth stencil state");
+            return false;
+        }
+
+        ctx->perspectiveDepthStencilState = (__bridge_retained void*)depthStencilState;
+        metal_debug_log("Perspective pipeline created successfully with depth testing");
     }
 
     return true;

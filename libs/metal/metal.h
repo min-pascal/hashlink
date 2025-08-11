@@ -1,4 +1,3 @@
-
 #ifndef METAL_H
 #define METAL_H
 
@@ -15,6 +14,7 @@
 // Common constants and macros
 #define DEBUG_FILE "/tmp/metal_debug.log"
 #define MAX_FRAMES_IN_FLIGHT 3
+#define NUM_INSTANCES 32
 
 // Forward declarations
 typedef struct metal_context metal_context;
@@ -37,6 +37,12 @@ struct frame_data {
 struct metal_instance_data {
     simd_float4x4 instanceTransform;
     simd_float4 instanceColor;
+};
+
+// Camera data structure for perspective rendering
+struct metal_camera_data {
+    simd_float4x4 perspectiveTransform;
+    simd_float4x4 worldTransform;
 };
 
 // Main context structure - use void* for ARC compatibility
@@ -72,6 +78,16 @@ struct metal_context {
     void *instancingPipelineState; // id<MTLRenderPipelineState>
     NSUInteger instanceIndexCount;
     NSUInteger instanceVertexCount;
+
+    // Perspective rendering support fields
+    void *perspectiveVertexBuffer;     // id<MTLBuffer>
+    void *perspectiveIndexBuffer;      // id<MTLBuffer>
+    void *perspectivePipelineState;    // id<MTLRenderPipelineState>
+    void *perspectiveDepthStencilState; // id<MTLDepthStencilState>
+    void *cameraDataBuffers[MAX_FRAMES_IN_FLIGHT]; // id<MTLBuffer>
+    void *depthTexture;                // id<MTLTexture> - for depth testing
+    NSUInteger perspectiveIndexCount;
+    NSUInteger perspectiveVertexCount;
 };
 
 // Global context
@@ -88,8 +104,10 @@ void metal_shutdown_context(void);
 // Shader management functions (metal_shaders.m)
 extern NSString *shaderSource;
 extern NSString *instancingShaderSource;
+extern NSString *perspectiveShaderSource;
 bool metal_setup_pipeline(void);
 bool metal_setup_instancing_pipeline(void);
+bool metal_setup_perspective_pipeline(void);
 
 // Buffer management functions (metal_buffers.m)
 vdynamic* metal_alloc_buffer_impl(int size, int flags);
@@ -107,5 +125,9 @@ bool metal_create_triangle_with_argbuffers_impl(float* positions, float* colors,
 bool metal_render_triangle_with_argbuffers_impl(int r, int g, int b, int a);
 bool metal_create_instanced_rectangles_impl(void);
 bool metal_render_instanced_rectangles_impl(int r, int g, int b, int a);
+
+// Perspective rendering functions (metal_perspective.m)
+bool metal_create_perspective_cubes_impl(void);
+bool metal_render_perspective_cubes_impl(int r, int g, int b, int a);
 
 #endif // METAL_H

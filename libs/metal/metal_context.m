@@ -99,7 +99,7 @@ bool metal_setup_window_context(vdynamic *win) {
         id<MTLDevice> device = (__bridge id<MTLDevice>)ctx->device;
         layer.device = device;
         layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
-        layer.framebufferOnly = YES;
+        layer.framebufferOnly = NO; // Changed to NO to support depth buffer
         layer.opaque = YES;
 
         // Get window size and set layer drawable size
@@ -107,6 +107,23 @@ bool metal_setup_window_context(vdynamic *win) {
         SDL_GetWindowSize(window, &width, &height);
         layer.drawableSize = CGSizeMake(width, height);
         metal_debug_log("Metal layer configured with size %d x %d", width, height);
+
+        // Create depth texture for perspective rendering
+        MTLTextureDescriptor *depthTextureDescriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatDepth32Float
+                                                                                                          width:width
+                                                                                                         height:height
+                                                                                                      mipmapped:NO];
+        depthTextureDescriptor.usage = MTLTextureUsageRenderTarget;
+        depthTextureDescriptor.storageMode = MTLStorageModePrivate;
+
+        id<MTLTexture> depthTexture = [device newTextureWithDescriptor:depthTextureDescriptor];
+        if (!depthTexture) {
+            metal_debug_log("Failed to create depth texture");
+            return false;
+        }
+
+        ctx->depthTexture = (__bridge_retained void*)depthTexture;
+        metal_debug_log("Depth texture created with size %d x %d", width, height);
 
         // Setup frame data for animation
         if (!metal_setup_frame_data()) {

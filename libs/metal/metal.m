@@ -5,3 +5,4 @@
 #include "metal_buffers.m"
 #include "metal_rendering.m"
 #include "metal_advanced.m"
+#include "metal_perspective.m"

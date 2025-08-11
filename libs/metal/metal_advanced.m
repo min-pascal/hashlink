@@ -1,6 +1,5 @@
 #include "metal.h"
 
-static const size_t kNumInstances = 32;
 
 bool metal_create_triangle_with_argbuffers_impl(float* positions, float* colors, int vertexCount) {
     if (ctx == NULL || vertexCount <= 0) {
@@ -245,7 +244,7 @@ bool metal_create_instanced_rectangles_impl(void) {
 
         // Create instance data buffers for triple buffering
         for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-            id<MTLBuffer> buffer = [device newBufferWithLength:kNumInstances * sizeof(metal_instance_data)
+            id<MTLBuffer> buffer = [device newBufferWithLength:NUM_INSTANCES * sizeof(metal_instance_data)
                                                        options:MTLResourceStorageModeShared];
             if (!buffer) {
                 metal_debug_log("Failed to create instance data buffer %d", i);
@@ -290,9 +289,9 @@ bool metal_render_instanced_rectangles_impl(int r, int g, int b, int a) {
         metal_instance_data* instanceData = (metal_instance_data*)currentInstanceBuffer.contents;
         const float scl = 0.1f;
 
-        for (size_t i = 0; i < kNumInstances; ++i) {
-            float iDivNumInstances = i / (float)kNumInstances;
-            float xoff = (iDivNumInstances * 2.0f - 1.0f) + (1.f/kNumInstances);
+        for (size_t i = 0; i < NUM_INSTANCES; ++i) {
+            float iDivNumInstances = i / (float)NUM_INSTANCES;
+            float xoff = (iDivNumInstances * 2.0f - 1.0f) + (1.f/NUM_INSTANCES);
             float yoff = sin((iDivNumInstances + ctx->angle) * 2.0f * M_PI);
 
             // Create rotation and translation matrix
@@ -354,7 +353,7 @@ bool metal_render_instanced_rectangles_impl(int r, int g, int b, int a) {
                                        indexType:MTLIndexTypeUInt16
                                      indexBuffer:instanceIndexBuffer
                                indexBufferOffset:0
-                                   instanceCount:kNumInstances];
+                                   instanceCount:NUM_INSTANCES];
         }
 
         [renderEncoder endEncoding];
