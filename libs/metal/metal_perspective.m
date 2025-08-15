@@ -65,7 +65,7 @@ static simd_float4x4 makeScale(simd_float3 v) {
     );
 }
 
-static simd_float3 addFloat3(simd_float3 a, simd_float3 b) {
+simd_float3 addFloat3(simd_float3 a, simd_float3 b) {
     return simd_make_float3(a.x + b.x, a.y + b.y, a.z + b.z);
 }
 

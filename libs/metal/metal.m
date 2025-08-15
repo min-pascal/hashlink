@@ -6,3 +6,4 @@
 #include "metal_rendering.m"
 #include "metal_advanced.m"
 #include "metal_perspective.m"
+#include "metal_lighting.m"

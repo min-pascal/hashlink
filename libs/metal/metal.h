@@ -45,6 +45,26 @@ struct metal_camera_data {
     simd_float4x4 worldTransform;
 };
 
+// Vertex structure with position and normal for lighting
+struct metal_lighting_vertex {
+    float position[3];
+    float normal[3];
+};
+
+// Instance data for lighting with normal transform
+struct metal_lighting_instance_data {
+    simd_float4x4 instanceTransform;
+    simd_float3x3 instanceNormalTransform;
+    simd_float4 instanceColor;
+};
+
+// Camera data for lighting with normal transform
+struct metal_lighting_camera_data {
+    simd_float4x4 perspectiveTransform;
+    simd_float4x4 worldTransform;
+    simd_float3x3 worldNormalTransform;
+};
+
 // Main context structure - use void* for ARC compatibility
 struct metal_context {
     void *device;           // id<MTLDevice>
@@ -88,6 +108,16 @@ struct metal_context {
     void *depthTexture;                // id<MTLTexture> - for depth testing
     NSUInteger perspectiveIndexCount;
     NSUInteger perspectiveVertexCount;
+
+    // Lighting rendering support fields
+    void *lightingVertexBuffer;        // id<MTLBuffer> - vertices with normals
+    void *lightingIndexBuffer;         // id<MTLBuffer> - cube indices
+    void *lightingPipelineState;       // id<MTLRenderPipelineState> - lighting pipeline
+    void *lightingDepthStencilState;   // id<MTLDepthStencilState> - depth state
+    void *lightingInstanceDataBuffers[MAX_FRAMES_IN_FLIGHT]; // id<MTLBuffer> - instance data with normal transforms
+    void *lightingCameraDataBuffers[MAX_FRAMES_IN_FLIGHT];   // id<MTLBuffer> - camera data with normal transforms
+    NSUInteger lightingIndexCount;
+    NSUInteger lightingVertexCount;
 };
 
 // Global context
@@ -129,5 +159,12 @@ bool metal_render_instanced_rectangles_impl(int r, int g, int b, int a);
 // Perspective rendering functions (metal_perspective.m)
 bool metal_create_perspective_cubes_impl(void);
 bool metal_render_perspective_cubes_impl(int r, int g, int b, int a);
+
+// Lighting rendering functions (metal_lighting.m)
+bool metal_create_lighting_cubes_impl(void);
+bool metal_render_lighting_cubes_impl(int r, int g, int b, int a);
+
+// Utility functions
+simd_float3 addFloat3(simd_float3 a, simd_float3 b);
 
 #endif // METAL_H
