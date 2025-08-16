@@ -129,6 +129,52 @@ fragment half4 perspectiveFragmentShader(RasterizerData in [[stage_in]]) {\n\
 }\n\
 ";
 
+// Debug point shader source for rendering colored dots on vertices
+NSString *debugPointShaderSource = @"\
+#include <metal_stdlib>\n\
+using namespace metal;\n\
+\n\
+struct VertexData {\n\
+    float3 position;\n\
+};\n\
+\n\
+struct InstanceData {\n\
+    float4x4 instanceTransform;\n\
+    float4 instanceColor;\n\
+};\n\
+\n\
+struct CameraData {\n\
+    float4x4 perspectiveTransform;\n\
+    float4x4 worldTransform;\n\
+};\n\
+\n\
+struct RasterizerData {\n\
+    float4 position [[position]];\n\
+    float pointSize [[point_size]];\n\
+    half3 color;\n\
+};\n\
+\n\
+vertex RasterizerData debugPointVertexShader(device const VertexData* vertexData [[buffer(0)]],\n\
+                                            device const InstanceData* instanceData [[buffer(1)]],\n\
+                                            device const CameraData& cameraData [[buffer(2)]],\n\
+                                            uint vertexId [[vertex_id]],\n\
+                                            uint instanceId [[instance_id]]) {\n\
+    RasterizerData out;\n\
+    float4 pos = float4(vertexData[vertexId].position, 1.0);\n\
+    pos = instanceData[instanceId].instanceTransform * pos;\n\
+    pos = cameraData.perspectiveTransform * cameraData.worldTransform * pos;\n\
+    out.position = pos;\n\
+    out.pointSize = 8.0; // Set point size to 8 pixels\n\
+    // Use bright colors for debug points - different from cube colors\n\
+    out.color = half3(1.0, 1.0, 0.0); // Yellow debug points\n\
+    return out;\n\
+}\n\
+\n\
+fragment half4 debugPointFragmentShader(RasterizerData in [[stage_in]]) {\n\
+    return half4(in.color, 1.0);\n\
+}\n\
+";
+
 bool metal_setup_pipeline(void) {
     if (ctx == NULL || !ctx->windowSetup) return false;
 
@@ -310,6 +356,54 @@ bool metal_setup_perspective_pipeline(void) {
 
         ctx->perspectiveDepthStencilState = (__bridge_retained void*)depthStencilState;
         metal_debug_log("Perspective pipeline created successfully with depth testing");
+    }
+
+    return true;
+}
+
+bool metal_setup_debug_point_pipeline(void) {
+    if (ctx == NULL || !ctx->windowSetup) return false;
+
+    metal_debug_log("Setting up Metal debug point pipeline");
+
+    @autoreleasepool {
+        id<MTLDevice> device = (__bridge id<MTLDevice>)ctx->device;
+        CAMetalLayer* layer = (__bridge CAMetalLayer*)ctx->layer;
+
+        NSError *error = nil;
+        id<MTLLibrary> library = [device newLibraryWithSource:debugPointShaderSource
+                                                      options:nil
+                                                        error:&error];
+        if (!library) {
+            metal_debug_log("Failed to create debug point shader library: %s",
+                           error ? [[error localizedDescription] UTF8String] : "Unknown error");
+            return false;
+        }
+
+        id<MTLFunction> vertexFunction = [library newFunctionWithName:@"debugPointVertexShader"];
+        id<MTLFunction> fragmentFunction = [library newFunctionWithName:@"debugPointFragmentShader"];
+
+        if (!vertexFunction || !fragmentFunction) {
+            metal_debug_log("Failed to get debug point shader functions");
+            return false;
+        }
+
+        MTLRenderPipelineDescriptor *pipelineDescriptor = [[MTLRenderPipelineDescriptor alloc] init];
+        pipelineDescriptor.vertexFunction = vertexFunction;
+        pipelineDescriptor.fragmentFunction = fragmentFunction;
+        pipelineDescriptor.colorAttachments[0].pixelFormat = layer.pixelFormat;
+        pipelineDescriptor.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
+
+        id<MTLRenderPipelineState> debugPipelineState = [device newRenderPipelineStateWithDescriptor:pipelineDescriptor
+                                                                                                error:&error];
+        if (!debugPipelineState) {
+            metal_debug_log("Failed to create debug point pipeline state: %s",
+                           error ? [[error localizedDescription] UTF8String] : "Unknown error");
+            return false;
+        }
+
+        ctx->debugPipelineState = (__bridge_retained void*)debugPipelineState;
+        metal_debug_log("Debug point pipeline created successfully");
     }
 
     return true;

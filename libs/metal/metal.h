@@ -109,6 +109,13 @@ struct metal_context {
     NSUInteger perspectiveIndexCount;
     NSUInteger perspectiveVertexCount;
 
+    // Vertex debugging support fields for colored dots on cube vertices
+    void *debugVertexBuffer;           // id<MTLBuffer> - vertex positions for debugging dots
+    void *debugPipelineState;          // id<MTLRenderPipelineState> - point rendering pipeline
+    void *debugInstanceDataBuffers[MAX_FRAMES_IN_FLIGHT]; // id<MTLBuffer> - instance data for debug dots
+    NSUInteger debugVertexCount;
+    bool debugDotsEnabled;             // Flag to enable/disable debug dots rendering
+
     // Lighting rendering support fields
     void *lightingVertexBuffer;        // id<MTLBuffer> - vertices with normals
     void *lightingIndexBuffer;         // id<MTLBuffer> - cube indices
@@ -135,9 +142,11 @@ void metal_shutdown_context(void);
 extern NSString *shaderSource;
 extern NSString *instancingShaderSource;
 extern NSString *perspectiveShaderSource;
+extern NSString *debugPointShaderSource;
 bool metal_setup_pipeline(void);
 bool metal_setup_instancing_pipeline(void);
 bool metal_setup_perspective_pipeline(void);
+bool metal_setup_debug_point_pipeline(void);
 
 // Buffer management functions (metal_buffers.m)
 vdynamic* metal_alloc_buffer_impl(int size, int flags);
@@ -159,6 +168,7 @@ bool metal_render_instanced_rectangles_impl(int r, int g, int b, int a);
 // Perspective rendering functions (metal_perspective.m)
 bool metal_create_perspective_cubes_impl(void);
 bool metal_render_perspective_cubes_impl(int r, int g, int b, int a);
+bool metal_enable_debug_dots_impl(bool enable);
 
 // Lighting rendering functions (metal_lighting.m)
 bool metal_create_lighting_cubes_impl(void);

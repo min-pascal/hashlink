@@ -156,6 +156,35 @@ bool metal_create_perspective_cubes_impl(void) {
             ctx->cameraDataBuffers[i] = (__bridge_retained void*)buffer;
         }
 
+        // Create debug vertex buffer for rendering dots at cube vertices
+        id<MTLBuffer> debugVertexBuffer = [device newBufferWithBytes:vertices
+                                                              length:sizeof(vertices)
+                                                             options:MTLResourceStorageModeShared];
+        if (!debugVertexBuffer) {
+            metal_debug_log("Failed to create debug vertex buffer");
+            return false;
+        }
+        ctx->debugVertexBuffer = (__bridge_retained void*)debugVertexBuffer;
+        ctx->debugVertexCount = 8; // 8 vertices per cube
+        ctx->debugDotsEnabled = false; // Initially disabled
+
+        // Create debug instance data buffers for triple buffering
+        for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+            id<MTLBuffer> buffer = [device newBufferWithLength:NUM_INSTANCES * sizeof(metal_instance_data)
+                                                       options:MTLResourceStorageModeShared];
+            if (!buffer) {
+                metal_debug_log("Failed to create debug instance data buffer %d", i);
+                return false;
+            }
+            ctx->debugInstanceDataBuffers[i] = (__bridge_retained void*)buffer;
+        }
+
+        // Setup debug point pipeline
+        if (!metal_setup_debug_point_pipeline()) {
+            metal_debug_log("Failed to setup debug point pipeline");
+            return false;
+        }
+
         // Setup perspective pipeline if needed
         if (!ctx->perspectivePipelineState) {
             if (!metal_setup_perspective_pipeline()) {
@@ -288,11 +317,57 @@ bool metal_render_perspective_cubes_impl(int r, int g, int b, int a) {
                                    instanceCount:NUM_INSTANCES];
         }
 
+        // Render debug dots on vertices if enabled
+        if (ctx->debugDotsEnabled && ctx->debugPipelineState && ctx->debugVertexBuffer) {
+            // Update debug instance data (same transforms as cubes)
+            id<MTLBuffer> currentDebugInstanceBuffer = (__bridge id<MTLBuffer>)ctx->debugInstanceDataBuffers[ctx->frameIndex];
+            metal_instance_data* debugInstanceData = (metal_instance_data*)currentDebugInstanceBuffer.contents;
+
+            // Copy the same transform data for debug dots
+            for (size_t i = 0; i < NUM_INSTANCES; ++i) {
+                debugInstanceData[i].instanceTransform = instanceData[i].instanceTransform;
+                // Use different color for debug dots - bright yellow
+                debugInstanceData[i].instanceColor = simd_make_float4(1.0f, 1.0f, 0.0f, 1.0f);
+            }
+
+            id<MTLRenderPipelineState> debugPipelineState = (__bridge id<MTLRenderPipelineState>)ctx->debugPipelineState;
+            id<MTLBuffer> debugVertexBuffer = (__bridge id<MTLBuffer>)ctx->debugVertexBuffer;
+
+            [renderEncoder setRenderPipelineState:debugPipelineState];
+
+            // Use the same depth stencil state for proper depth testing
+            if (ctx->perspectiveDepthStencilState) {
+                id<MTLDepthStencilState> depthStencilState = (__bridge id<MTLDepthStencilState>)ctx->perspectiveDepthStencilState;
+                [renderEncoder setDepthStencilState:depthStencilState];
+            }
+
+            [renderEncoder setVertexBuffer:debugVertexBuffer offset:0 atIndex:0];
+            [renderEncoder setVertexBuffer:currentDebugInstanceBuffer offset:0 atIndex:1];
+            [renderEncoder setVertexBuffer:currentCameraBuffer offset:0 atIndex:2];
+
+            // Render as points (one point per vertex per instance)
+            [renderEncoder drawPrimitives:MTLPrimitiveTypePoint
+                              vertexStart:0
+                              vertexCount:ctx->debugVertexCount
+                            instanceCount:NUM_INSTANCES];
+        }
+
         [renderEncoder endEncoding];
         [commandBuffer presentDrawable:drawable];
         [commandBuffer commit];
     }
 
+    return true;
+}
+
+bool metal_enable_debug_dots_impl(bool enable) {
+    if (ctx == NULL) {
+        metal_debug_log("Cannot enable debug dots: ctx is NULL");
+        return false;
+    }
+
+    ctx->debugDotsEnabled = enable;
+    metal_debug_log("Debug dots %s", enable ? "ENABLED" : "DISABLED");
     return true;
 }
 
@@ -305,5 +380,10 @@ HL_PRIM bool HL_NAME(render_perspective_cubes)(int r, int g, int b, int a) {
     return metal_render_perspective_cubes_impl(r, g, b, a);
 }
 
+HL_PRIM bool HL_NAME(enable_debug_dots)(bool enable) {
+    return metal_enable_debug_dots_impl(enable);
+}
+
 DEFINE_PRIM(_BOOL, create_perspective_cubes, _NO_ARG);
 DEFINE_PRIM(_BOOL, render_perspective_cubes, _I32 _I32 _I32 _I32);
+DEFINE_PRIM(_BOOL, enable_debug_dots, _BOOL);
