@@ -165,8 +165,22 @@ vertex RasterizerData debugPointVertexShader(device const VertexData* vertexData
     pos = cameraData.perspectiveTransform * cameraData.worldTransform * pos;\n\
     out.position = pos;\n\
     out.pointSize = 8.0; // Set point size to 8 pixels\n\
-    // Use bright colors for debug points - different from cube colors\n\
-    out.color = half3(1.0, 1.0, 0.0); // Yellow debug points\n\
+    \n\
+    // Create distinct colors for each vertex (0-7 for cube vertices)\n\
+    float t = float(vertexId) / 7.0; // Normalize vertex ID to 0-1 range\n\
+    // Create a rainbow pattern based on vertex ID\n\
+    float hue = t * 6.28318; // Full circle in radians\n\
+    float3 rgb;\n\
+    if (vertexId == 0) rgb = float3(1.0, 0.0, 0.0);      // Red\n\
+    else if (vertexId == 1) rgb = float3(1.0, 0.5, 0.0); // Orange\n\
+    else if (vertexId == 2) rgb = float3(1.0, 1.0, 0.0); // Yellow\n\
+    else if (vertexId == 3) rgb = float3(0.0, 1.0, 0.0); // Green\n\
+    else if (vertexId == 4) rgb = float3(0.0, 1.0, 1.0); // Cyan\n\
+    else if (vertexId == 5) rgb = float3(0.0, 0.0, 1.0); // Blue\n\
+    else if (vertexId == 6) rgb = float3(0.5, 0.0, 1.0); // Purple\n\
+    else rgb = float3(1.0, 0.0, 1.0);                    // Magenta\n\
+    \n\
+    out.color = half3(rgb);\n\
     return out;\n\
 }\n\
 \n\

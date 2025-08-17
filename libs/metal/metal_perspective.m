@@ -326,8 +326,6 @@ bool metal_render_perspective_cubes_impl(int r, int g, int b, int a) {
             // Copy the same transform data for debug dots
             for (size_t i = 0; i < NUM_INSTANCES; ++i) {
                 debugInstanceData[i].instanceTransform = instanceData[i].instanceTransform;
-                // Use different color for debug dots - bright yellow
-                debugInstanceData[i].instanceColor = simd_make_float4(1.0f, 1.0f, 0.0f, 1.0f);
             }
 
             id<MTLRenderPipelineState> debugPipelineState = (__bridge id<MTLRenderPipelineState>)ctx->debugPipelineState;
