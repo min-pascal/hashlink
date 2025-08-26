@@ -91,8 +91,9 @@ NSString *perspectiveShaderSource = @"\
 #include <metal_stdlib>\n\
 using namespace metal;\n\
 \n\
+// Matching the exact C struct layout with array notation\n\
 struct VertexData {\n\
-    float3 position;\n\
+    float position[3];\n\
 };\n\
 \n\
 struct InstanceData {\n\
@@ -116,7 +117,12 @@ vertex RasterizerData perspectiveVertexShader(device const VertexData* vertexDat
                                             uint vertexId [[vertex_id]],\n\
                                             uint instanceId [[instance_id]]) {\n\
     RasterizerData out;\n\
-    float4 pos = float4(vertexData[vertexId].position, 1.0);\n\
+    \n\
+    // Access position using array notation to match the C struct\n\
+    float4 pos = float4(vertexData[vertexId].position[0],\n\
+                        vertexData[vertexId].position[1],\n\
+                        vertexData[vertexId].position[2], 1.0);\n\
+    \n\
     pos = instanceData[instanceId].instanceTransform * pos;\n\
     pos = cameraData.perspectiveTransform * cameraData.worldTransform * pos;\n\
     out.position = pos;\n\
@@ -135,7 +141,7 @@ NSString *debugPointShaderSource = @"\
 using namespace metal;\n\
 \n\
 struct VertexData {\n\
-    float3 position;\n\
+    float position[3];\n\
 };\n\
 \n\
 struct InstanceData {\n\
@@ -155,30 +161,33 @@ struct RasterizerData {\n\
 };\n\
 \n\
 vertex RasterizerData debugPointVertexShader(device const VertexData* vertexData [[buffer(0)]],\n\
-                                            device const InstanceData* instanceData [[buffer(1)]],\n\
-                                            device const CameraData& cameraData [[buffer(2)]],\n\
-                                            uint vertexId [[vertex_id]],\n\
-                                            uint instanceId [[instance_id]]) {\n\
+                                           device const InstanceData* instanceData [[buffer(1)]],\n\
+                                           device const CameraData& cameraData [[buffer(2)]],\n\
+                                           uint vertexId [[vertex_id]],\n\
+                                           uint instanceId [[instance_id]]) {\n\
     RasterizerData out;\n\
-    float4 pos = float4(vertexData[vertexId].position, 1.0);\n\
-    pos = instanceData[instanceId].instanceTransform * pos;\n\
-    pos = cameraData.perspectiveTransform * cameraData.worldTransform * pos;\n\
-    out.position = pos;\n\
-    out.pointSize = 8.0; // Set point size to 8 pixels\n\
     \n\
-    // Create distinct colors for each vertex (0-7 for cube vertices)\n\
-    float t = float(vertexId) / 7.0; // Normalize vertex ID to 0-1 range\n\
-    // Create a rainbow pattern based on vertex ID\n\
-    float hue = t * 6.28318; // Full circle in radians\n\
+    // Access position using array notation to match the C struct\n\
+    float4 pos = float4(vertexData[vertexId].position[0], \n\
+                        vertexData[vertexId].position[1], \n\
+                        vertexData[vertexId].position[2], 1.0);\n\
+    \n\
+    pos = instanceData[instanceId].instanceTransform * pos;\n\
+    \n\
+    pos = cameraData.perspectiveTransform * cameraData.worldTransform * pos;\n\
+    \n\
+    out.position = pos;\n\
+    out.pointSize = 8.0;\n\
+    \n\
     float3 rgb;\n\
-    if (vertexId == 0) rgb = float3(1.0, 0.0, 0.0);      // Red\n\
-    else if (vertexId == 1) rgb = float3(1.0, 0.5, 0.0); // Orange\n\
-    else if (vertexId == 2) rgb = float3(1.0, 1.0, 0.0); // Yellow\n\
-    else if (vertexId == 3) rgb = float3(0.0, 1.0, 0.0); // Green\n\
-    else if (vertexId == 4) rgb = float3(0.0, 1.0, 1.0); // Cyan\n\
-    else if (vertexId == 5) rgb = float3(0.0, 0.0, 1.0); // Blue\n\
-    else if (vertexId == 6) rgb = float3(0.5, 0.0, 1.0); // Purple\n\
-    else rgb = float3(1.0, 0.0, 1.0);                    // Magenta\n\
+    if (vertexId == 0) rgb = float3(1.0, 0.0, 0.0);      /* Red - vertex 0 */\n\
+    else if (vertexId == 1) rgb = float3(1.0, 0.5, 0.0); /* Orange - vertex 1 */\n\
+    else if (vertexId == 2) rgb = float3(1.0, 1.0, 0.0); /* Yellow - vertex 2 */\n\
+    else if (vertexId == 3) rgb = float3(0.0, 1.0, 0.0); /* Green - vertex 3 */\n\
+    else if (vertexId == 4) rgb = float3(0.0, 1.0, 1.0); /* Cyan - vertex 4 */\n\
+    else if (vertexId == 5) rgb = float3(0.0, 0.0, 1.0); /* Blue - vertex 5 */\n\
+    else if (vertexId == 6) rgb = float3(1.0, 0.0, 1.0); /* Magenta - vertex 6 */\n\
+    else rgb = float3(0.5, 0.0, 1.0);                    /* Purple - vertex 7 */\n\
     \n\
     out.color = half3(rgb);\n\
     return out;\n\

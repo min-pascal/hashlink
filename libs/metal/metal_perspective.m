@@ -216,11 +216,11 @@ bool metal_render_perspective_cubes_impl(int r, int g, int b, int a) {
         id<MTLBuffer> currentCameraBuffer = (__bridge id<MTLBuffer>)ctx->cameraDataBuffers[ctx->frameIndex];
 
         // Update animation angle
-        ctx->angle += 0.001f;
+        ctx->angle += 0.01f;
 
         // Update instance data
         metal_instance_data* instanceData = (metal_instance_data*)currentInstanceBuffer.contents;
-        const float scl = 1.0f;
+        const float scl = 0.1f;
         simd_float3 objectPosition = simd_make_float3(0.0f, 0.0f, -5.0f);
 
         // Create world rotation matrices
@@ -236,8 +236,8 @@ bool metal_render_perspective_cubes_impl(int r, int g, int b, int a) {
 
             // Create transformation matrices
             simd_float4x4 scale = makeScale(simd_make_float3(scl, scl, scl));
-            simd_float4x4 zrot = makeZRotate(0.0f);
-            simd_float4x4 yrot = makeYRotate(0.0f);
+            simd_float4x4 zrot = makeZRotate(ctx->angle);
+            simd_float4x4 yrot = makeYRotate(ctx->angle);
             simd_float4x4 translate = makeTranslate(addFloat3(objectPosition, simd_make_float3(xoff, yoff, 0.0f)));
 
             instanceData[i].instanceTransform = simd_mul(simd_mul(simd_mul(simd_mul(fullObjectRot, translate), yrot), zrot), scale);
@@ -289,7 +289,6 @@ bool metal_render_perspective_cubes_impl(int r, int g, int b, int a) {
         id<MTLRenderCommandEncoder> renderEncoder = [commandBuffer renderCommandEncoderWithDescriptor:renderPassDescriptor];
 
         // Render perspective cubes
-        /*
         if (ctx->perspectivePipelineState && ctx->perspectiveVertexBuffer && ctx->perspectiveIndexBuffer) {
             id<MTLRenderPipelineState> perspectivePipelineState = (__bridge id<MTLRenderPipelineState>)ctx->perspectivePipelineState;
             id<MTLBuffer> perspectiveVertexBuffer = (__bridge id<MTLBuffer>)ctx->perspectiveVertexBuffer;
@@ -317,7 +316,6 @@ bool metal_render_perspective_cubes_impl(int r, int g, int b, int a) {
                                indexBufferOffset:0
                                    instanceCount:NUM_INSTANCES];
         }
-        */
 
         // Render debug dots on vertices if enabled
         if (ctx->debugDotsEnabled && ctx->debugPipelineState && ctx->debugVertexBuffer) {
