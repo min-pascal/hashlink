@@ -65,6 +65,13 @@ struct metal_lighting_camera_data {
     simd_float3x3 worldNormalTransform;
 };
 
+// Vertex structure with position, normal, and texture coordinates for textured rendering
+struct metal_textured_vertex {
+    float position[3];
+    float normal[3];
+    float texcoord[2];
+};
+
 // Main context structure - use void* for ARC compatibility
 struct metal_context {
     void *device;           // id<MTLDevice>
@@ -125,6 +132,17 @@ struct metal_context {
     void *lightingCameraDataBuffers[MAX_FRAMES_IN_FLIGHT];   // id<MTLBuffer> - camera data with normal transforms
     NSUInteger lightingIndexCount;
     NSUInteger lightingVertexCount;
+
+    // Textured rendering support fields
+    void *texturedVertexBuffer;        // id<MTLBuffer> - vertices with texture coordinates
+    void *texturedIndexBuffer;         // id<MTLBuffer> - textured object indices
+    void *texturedPipelineState;       // id<MTLRenderPipelineState> - textured rendering pipeline
+    void *texturedDepthStencilState;   // id<MTLDepthStencilState> - depth state for textured objects
+    void *texturedInstanceDataBuffers[MAX_FRAMES_IN_FLIGHT]; // id<MTLBuffer> - instance data for textured objects
+    void *texturedCameraDataBuffers[MAX_FRAMES_IN_FLIGHT];   // id<MTLBuffer> - camera data for textured objects
+    void *checkerboardTexture;         // id<MTLTexture> - procedural checkerboard texture
+    NSUInteger texturedIndexCount;
+    NSUInteger texturedVertexCount;
 };
 
 // Global context
@@ -143,10 +161,12 @@ extern NSString *shaderSource;
 extern NSString *instancingShaderSource;
 extern NSString *perspectiveShaderSource;
 extern NSString *debugPointShaderSource;
+extern NSString *texturingShaderSource;
 bool metal_setup_pipeline(void);
 bool metal_setup_instancing_pipeline(void);
 bool metal_setup_perspective_pipeline(void);
 bool metal_setup_debug_point_pipeline(void);
+bool metal_setup_textured_pipeline(void);
 
 // Buffer management functions (metal_buffers.m)
 vdynamic* metal_alloc_buffer_impl(int size, int flags);
@@ -173,6 +193,10 @@ bool metal_enable_debug_dots_impl(bool enable);
 // Lighting rendering functions (metal_lighting.m)
 bool metal_create_lighting_cubes_impl(void);
 bool metal_render_lighting_cubes_impl(int r, int g, int b, int a);
+
+// Textured rendering functions (metal_texturing.m)
+bool metal_create_textured_cubes_impl(void);
+bool metal_render_textured_cubes_impl(int r, int g, int b, int a);
 
 // Utility functions
 simd_float3 addFloat3(simd_float3 a, simd_float3 b);

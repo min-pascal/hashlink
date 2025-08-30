@@ -1,7 +1,8 @@
 #include "metal.h"
 
 // Math utility functions for perspective rendering - FIXED to match C++ reference
-static simd_float4x4 makePerspective(float fovRadians, float aspect, float znear, float zfar) {
+// Made non-static so they can be used by other modules
+simd_float4x4 makePerspective(float fovRadians, float aspect, float znear, float zfar) {
     float ys = 1.0f / tanf(fovRadians * 0.5f);
     float xs = ys / aspect;
     float zs = zfar / (znear - zfar);
@@ -14,7 +15,7 @@ static simd_float4x4 makePerspective(float fovRadians, float aspect, float znear
     );
 }
 
-static simd_float4x4 makeIdentity() {
+simd_float4x4 makeIdentity() {
     // Use column-major construction like C++ reference
     return simd_matrix(
         simd_make_float4(1.0f, 0.0f, 0.0f, 0.0f),
@@ -24,7 +25,7 @@ static simd_float4x4 makeIdentity() {
     );
 }
 
-static simd_float4x4 makeTranslate(simd_float3 v) {
+simd_float4x4 makeTranslate(simd_float3 v) {
     // Use column-major construction like C++ reference
     simd_float4 col0 = simd_make_float4(1.0f, 0.0f, 0.0f, 0.0f);
     simd_float4 col1 = simd_make_float4(0.0f, 1.0f, 0.0f, 0.0f);
@@ -33,7 +34,7 @@ static simd_float4x4 makeTranslate(simd_float3 v) {
     return simd_matrix(col0, col1, col2, col3);
 }
 
-static simd_float4x4 makeYRotate(float angleRadians) {
+simd_float4x4 makeYRotate(float angleRadians) {
     float a = angleRadians;
     // Use simd_matrix_from_rows to match C++ reference
     return simd_matrix_from_rows(
@@ -44,7 +45,17 @@ static simd_float4x4 makeYRotate(float angleRadians) {
     );
 }
 
-static simd_float4x4 makeZRotate(float angleRadians) {
+simd_float4x4 makeXRotate(float angleRadians) {
+    float a = angleRadians;
+    return simd_matrix_from_rows(
+        simd_make_float4(1.0f, 0.0f, 0.0f, 0.0f),
+        simd_make_float4(0.0f, cosf(a), sinf(a), 0.0f),
+        simd_make_float4(0.0f, -sinf(a), cosf(a), 0.0f),
+        simd_make_float4(0.0f, 0.0f, 0.0f, 1.0f)
+    );
+}
+
+simd_float4x4 makeZRotate(float angleRadians) {
     float a = angleRadians;
     // Use simd_matrix_from_rows to match C++ reference
     return simd_matrix_from_rows(
@@ -55,7 +66,7 @@ static simd_float4x4 makeZRotate(float angleRadians) {
     );
 }
 
-static simd_float4x4 makeScale(simd_float3 v) {
+simd_float4x4 makeScale(simd_float3 v) {
     // Use column-major construction like C++ reference
     return simd_matrix(
         simd_make_float4(v.x, 0.0f, 0.0f, 0.0f),
@@ -63,6 +74,10 @@ static simd_float4x4 makeScale(simd_float3 v) {
         simd_make_float4(0.0f, 0.0f, v.z, 0.0f),
         simd_make_float4(0.0f, 0.0f, 0.0f, 1.0f)
     );
+}
+
+simd_float3x3 discardTranslation(simd_float4x4 m) {
+    return simd_matrix(m.columns[0].xyz, m.columns[1].xyz, m.columns[2].xyz);
 }
 
 simd_float3 addFloat3(simd_float3 a, simd_float3 b) {
