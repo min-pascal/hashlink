@@ -24,8 +24,8 @@ NSString *lightingShaderSource = @"#include <metal_stdlib>\n"
 "\n"
 "struct VertexData\n"
 "{\n"
-"    float3 position;\n"
-"    float3 normal;\n"
+"    float position[3];\n"
+"    float normal[3];\n"
 "};\n"
 "\n"
 "struct InstanceData\n"
@@ -51,12 +51,13 @@ NSString *lightingShaderSource = @"#include <metal_stdlib>\n"
 "    v2f o;\n"
 "\n"
 "    const device VertexData& vd = vertexData[ vertexId ];\n"
-"    float4 pos = float4( vd.position, 1.0 );\n"
+"    float4 pos = float4( vd.position[0], vd.position[1], vd.position[2], 1.0 );\n"
 "    pos = instanceData[ instanceId ].instanceTransform * pos;\n"
 "    pos = cameraData.perspectiveTransform * cameraData.worldTransform * pos;\n"
 "    o.position = pos;\n"
 "\n"
-"    float3 normal = instanceData[ instanceId ].instanceNormalTransform * vd.normal;\n"
+"    float3 normal = float3( vd.normal[0], vd.normal[1], vd.normal[2] );\n"
+"    normal = instanceData[ instanceId ].instanceNormalTransform * normal;\n"
 "    normal = cameraData.worldNormalTransform * normal;\n"
 "    o.normal = normal;\n"
 "\n"
@@ -88,59 +89,61 @@ static simd_float4x4 makePerspectiveLighting(float fovRadians, float aspect, flo
 }
 
 static simd_float4x4 makeIdentityLighting() {
-    return simd_matrix_from_rows(
-        (simd_float4){1.0f, 0.0f, 0.0f, 0.0f},
-        (simd_float4){0.0f, 1.0f, 0.0f, 0.0f},
-        (simd_float4){0.0f, 0.0f, 1.0f, 0.0f},
-        (simd_float4){0.0f, 0.0f, 0.0f, 1.0f}
+    // Use column-major construction like the working perspective implementation
+    return simd_matrix(
+        simd_make_float4(1.0f, 0.0f, 0.0f, 0.0f),
+        simd_make_float4(0.0f, 1.0f, 0.0f, 0.0f),
+        simd_make_float4(0.0f, 0.0f, 1.0f, 0.0f),
+        simd_make_float4(0.0f, 0.0f, 0.0f, 1.0f)
     );
 }
 
 static simd_float4x4 makeTranslateLighting(simd_float3 v) {
-    return simd_matrix_from_rows(
-        (simd_float4){1.0f, 0.0f, 0.0f, 0.0f},
-        (simd_float4){0.0f, 1.0f, 0.0f, 0.0f},
-        (simd_float4){0.0f, 0.0f, 1.0f, 0.0f},
-        (simd_float4){v.x, v.y, v.z, 1.0f}
-    );
+    // Use column-major construction like the working perspective implementation
+    simd_float4 col0 = simd_make_float4(1.0f, 0.0f, 0.0f, 0.0f);
+    simd_float4 col1 = simd_make_float4(0.0f, 1.0f, 0.0f, 0.0f);
+    simd_float4 col2 = simd_make_float4(0.0f, 0.0f, 1.0f, 0.0f);
+    simd_float4 col3 = simd_make_float4(v.x, v.y, v.z, 1.0f);
+    return simd_matrix(col0, col1, col2, col3);
 }
 
 static simd_float4x4 makeScaleLighting(simd_float3 v) {
-    return simd_matrix_from_rows(
-        (simd_float4){v.x, 0, 0, 0},
-        (simd_float4){0, v.y, 0, 0},
-        (simd_float4){0, 0, v.z, 0},
-        (simd_float4){0, 0, 0, 1.0}
+    // Use column-major construction
+    return simd_matrix(
+        simd_make_float4(v.x, 0.0f, 0.0f, 0.0f),
+        simd_make_float4(0.0f, v.y, 0.0f, 0.0f),
+        simd_make_float4(0.0f, 0.0f, v.z, 0.0f),
+        simd_make_float4(0.0f, 0.0f, 0.0f, 1.0f)
     );
 }
 
 static simd_float4x4 makeYRotateLighting(float angleRadians) {
-    const float a = angleRadians;
+    float a = angleRadians;
     return simd_matrix_from_rows(
-        (simd_float4){cosf(a), 0.0f, sinf(a), 0.0f},
-        (simd_float4){0.0f, 1.0f, 0.0f, 0.0f},
-        (simd_float4){-sinf(a), 0.0f, cosf(a), 0.0f},
-        (simd_float4){0.0f, 0.0f, 0.0f, 1.0f}
+        simd_make_float4(cosf(a), 0.0f, sinf(a), 0.0f),
+        simd_make_float4(0.0f, 1.0f, 0.0f, 0.0f),
+        simd_make_float4(-sinf(a), 0.0f, cosf(a), 0.0f),
+        simd_make_float4(0.0f, 0.0f, 0.0f, 1.0f)
     );
 }
 
 static simd_float4x4 makeXRotateLighting(float angleRadians) {
-    const float a = angleRadians;
+    float a = angleRadians;
     return simd_matrix_from_rows(
-        (simd_float4){1.0f, 0.0f, 0.0f, 0.0f},
-        (simd_float4){0.0f, cosf(a), sinf(a), 0.0f},
-        (simd_float4){0.0f, -sinf(a), cosf(a), 0.0f},
-        (simd_float4){0.0f, 0.0f, 0.0f, 1.0f}
+        simd_make_float4(1.0f, 0.0f, 0.0f, 0.0f),
+        simd_make_float4(0.0f, cosf(a), sinf(a), 0.0f),
+        simd_make_float4(0.0f, -sinf(a), cosf(a), 0.0f),
+        simd_make_float4(0.0f, 0.0f, 0.0f, 1.0f)
     );
 }
 
 static simd_float4x4 makeZRotateLighting(float angleRadians) {
-    const float a = angleRadians;
+    float a = angleRadians;
     return simd_matrix_from_rows(
-        (simd_float4){cosf(a), sinf(a), 0.0f, 0.0f},
-        (simd_float4){-sinf(a), cosf(a), 0.0f, 0.0f},
-        (simd_float4){0.0f, 0.0f, 1.0f, 0.0f},
-        (simd_float4){0.0f, 0.0f, 0.0f, 1.0f}
+        simd_make_float4(cosf(a), sinf(a), 0.0f, 0.0f),
+        simd_make_float4(-sinf(a), cosf(a), 0.0f, 0.0f),
+        simd_make_float4(0.0f, 0.0f, 1.0f, 0.0f),
+        simd_make_float4(0.0f, 0.0f, 0.0f, 1.0f)
     );
 }
 
@@ -308,115 +311,135 @@ bool metal_render_lighting_cubes_impl(int r, int g, int b, int a) {
         return false;
     }
 
-    id<MTLCommandQueue> commandQueue = (__bridge id<MTLCommandQueue>)ctx->commandQueue;
-    CAMetalLayer *layer = (__bridge CAMetalLayer*)ctx->layer;
+    @autoreleasepool {
+        dispatch_semaphore_t semaphore = (__bridge dispatch_semaphore_t)ctx->frameSemaphore;
+        id<MTLCommandQueue> commandQueue = (__bridge id<MTLCommandQueue>)ctx->commandQueue;
+        CAMetalLayer *layer = (__bridge CAMetalLayer*)ctx->layer;
 
-    // Get current frame index
-    int frameIndex = ctx->frameIndex % MAX_FRAMES_IN_FLIGHT;
+        // Wait for available frame buffer
+        dispatch_semaphore_wait(semaphore, DISPATCH_TIME_FOREVER);
 
-    // Get drawable
-    id<CAMetalDrawable> drawable = [layer nextDrawable];
-    if (!drawable) {
-        return false;
-    }
+        // Get current frame index
+        int frameIndex = ctx->frameIndex % MAX_FRAMES_IN_FLIGHT;
 
-    // Create render pass descriptor
-    MTLRenderPassDescriptor *renderPassDescriptor = [MTLRenderPassDescriptor renderPassDescriptor];
-    renderPassDescriptor.colorAttachments[0].texture = drawable.texture;
-    renderPassDescriptor.colorAttachments[0].loadAction = MTLLoadActionClear;
-    renderPassDescriptor.colorAttachments[0].clearColor = MTLClearColorMake(r/255.0, g/255.0, b/255.0, a/255.0);
-    renderPassDescriptor.colorAttachments[0].storeAction = MTLStoreActionStore;
-
-    // Update animation
-    ctx->angle += 0.002f;
-
-    // Update instance data
-    id<MTLBuffer> instanceBuffer = (__bridge id<MTLBuffer>)ctx->lightingInstanceDataBuffers[frameIndex];
-    struct metal_lighting_instance_data *instanceData = (struct metal_lighting_instance_data*)instanceBuffer.contents;
-
-    const float scl = 0.2f;
-    simd_float3 objectPosition = {0.0f, 0.0f, -10.0f};
-
-    simd_float4x4 rt = makeTranslateLighting(objectPosition);
-    simd_float4x4 rr1 = makeYRotateLighting(-ctx->angle);
-    simd_float4x4 rr0 = makeXRotateLighting(ctx->angle * 0.5f);
-    simd_float3 negObjectPos = {-objectPosition.x, -objectPosition.y, -objectPosition.z};
-    simd_float4x4 rtInv = makeTranslateLighting(negObjectPos);
-    simd_float4x4 fullObjectRot = simd_mul(simd_mul(simd_mul(rt, rr1), rr0), rtInv);
-
-    size_t ix = 0, iy = 0, iz = 0;
-    for (size_t i = 0; i < LIGHTING_NUM_INSTANCES; ++i) {
-        if (ix == LIGHTING_INSTANCE_ROWS) {
-            ix = 0;
-            iy += 1;
-        }
-        if (iy == LIGHTING_INSTANCE_ROWS) {
-            iy = 0;
-            iz += 1;
+        // Get drawable
+        id<CAMetalDrawable> drawable = [layer nextDrawable];
+        if (!drawable) {
+            dispatch_semaphore_signal(semaphore);
+            return false;
         }
 
-        simd_float4x4 scale = makeScaleLighting((simd_float3){scl, scl, scl});
-        simd_float4x4 zrot = makeZRotateLighting(ctx->angle * sinf((float)ix));
-        simd_float4x4 yrot = makeYRotateLighting(ctx->angle * cosf((float)iy));
+        // Create render pass descriptor with proper depth buffer setup
+        MTLRenderPassDescriptor *renderPassDescriptor = [MTLRenderPassDescriptor renderPassDescriptor];
+        renderPassDescriptor.colorAttachments[0].texture = drawable.texture;
+        renderPassDescriptor.colorAttachments[0].loadAction = MTLLoadActionClear;
+        renderPassDescriptor.colorAttachments[0].clearColor = MTLClearColorMake(r/255.0, g/255.0, b/255.0, a/255.0);
+        renderPassDescriptor.colorAttachments[0].storeAction = MTLStoreActionStore;
 
-        float x = ((float)ix - (float)LIGHTING_INSTANCE_ROWS/2.0f) * (2.0f * scl) + scl;
-        float y = ((float)iy - (float)LIGHTING_INSTANCE_COLUMNS/2.0f) * (2.0f * scl) + scl;
-        float z = ((float)iz - (float)LIGHTING_INSTANCE_DEPTH/2.0f) * (2.0f * scl);
-        simd_float3 translateVec = addFloat3(objectPosition, (simd_float3){x, y, z});
-        simd_float4x4 translate = makeTranslateLighting(translateVec);
+        // Configure depth attachment for proper 3D rendering
+        id<MTLTexture> depthTexture = (__bridge id<MTLTexture>)ctx->depthTexture;
+        renderPassDescriptor.depthAttachment.texture = depthTexture;
+        renderPassDescriptor.depthAttachment.loadAction = MTLLoadActionClear;
+        renderPassDescriptor.depthAttachment.storeAction = MTLStoreActionDontCare;
+        renderPassDescriptor.depthAttachment.clearDepth = 1.0;
 
-        instanceData[i].instanceTransform = simd_mul(simd_mul(simd_mul(simd_mul(fullObjectRot, translate), yrot), zrot), scale);
-        instanceData[i].instanceNormalTransform = discardTranslationLighting(instanceData[i].instanceTransform);
+        // Update animation
+        ctx->angle += 0.002f;
 
-        float iDivNumInstances = i / (float)LIGHTING_NUM_INSTANCES;
-        float red = iDivNumInstances;
-        float green = 1.0f - red;
-        float blue = sinf(M_PI * 2.0f * iDivNumInstances);
-        instanceData[i].instanceColor = (simd_float4){red, green, blue, 1.0f};
+        // Update instance data
+        id<MTLBuffer> instanceBuffer = (__bridge id<MTLBuffer>)ctx->lightingInstanceDataBuffers[frameIndex];
+        struct metal_lighting_instance_data *instanceData = (struct metal_lighting_instance_data*)instanceBuffer.contents;
 
-        ix += 1;
+        const float scl = 0.2f;
+        simd_float3 objectPosition = {0.0f, 0.0f, -10.0f};
+
+        simd_float4x4 rt = makeTranslateLighting(objectPosition);
+        simd_float4x4 rr1 = makeYRotateLighting(-ctx->angle);
+        simd_float4x4 rr0 = makeXRotateLighting(ctx->angle * 0.5f);
+        simd_float3 negObjectPos = {-objectPosition.x, -objectPosition.y, -objectPosition.z};
+        simd_float4x4 rtInv = makeTranslateLighting(negObjectPos);
+        simd_float4x4 fullObjectRot = simd_mul(simd_mul(simd_mul(rt, rr1), rr0), rtInv);
+
+        size_t ix = 0, iy = 0, iz = 0;
+        for (size_t i = 0; i < LIGHTING_NUM_INSTANCES; ++i) {
+            if (ix == LIGHTING_INSTANCE_ROWS) {
+                ix = 0;
+                iy += 1;
+            }
+            if (iy == LIGHTING_INSTANCE_ROWS) {
+                iy = 0;
+                iz += 1;
+            }
+
+            simd_float4x4 scale = makeScaleLighting((simd_float3){scl, scl, scl});
+            simd_float4x4 zrot = makeZRotateLighting(ctx->angle * sinf((float)ix));
+            simd_float4x4 yrot = makeYRotateLighting(ctx->angle * cosf((float)iy));
+
+            float x = ((float)ix - (float)LIGHTING_INSTANCE_ROWS/2.0f) * (2.0f * scl) + scl;
+            float y = ((float)iy - (float)LIGHTING_INSTANCE_COLUMNS/2.0f) * (2.0f * scl) + scl;
+            float z = ((float)iz - (float)LIGHTING_INSTANCE_DEPTH/2.0f) * (2.0f * scl);
+            simd_float3 translateVec = addFloat3(objectPosition, (simd_float3){x, y, z});
+            simd_float4x4 translate = makeTranslateLighting(translateVec);
+
+            instanceData[i].instanceTransform = simd_mul(simd_mul(simd_mul(simd_mul(fullObjectRot, translate), yrot), zrot), scale);
+            instanceData[i].instanceNormalTransform = discardTranslationLighting(instanceData[i].instanceTransform);
+
+            float iDivNumInstances = i / (float)LIGHTING_NUM_INSTANCES;
+            float red = iDivNumInstances;
+            float green = 1.0f - red;
+            float blue = sinf(M_PI * 2.0f * iDivNumInstances);
+            instanceData[i].instanceColor = (simd_float4){red, green, blue, 1.0f};
+
+            ix += 1;
+        }
+        [instanceBuffer didModifyRange:NSMakeRange(0, instanceBuffer.length)];
+
+        // Update camera data
+        id<MTLBuffer> cameraBuffer = (__bridge id<MTLBuffer>)ctx->lightingCameraDataBuffers[frameIndex];
+        struct metal_lighting_camera_data *cameraData = (struct metal_lighting_camera_data*)cameraBuffer.contents;
+        cameraData->perspectiveTransform = makePerspectiveLighting(45.0f * M_PI / 180.0f, 1.0f, 0.03f, 500.0f);
+        cameraData->worldTransform = makeIdentityLighting();
+        cameraData->worldNormalTransform = discardTranslationLighting(cameraData->worldTransform);
+        [cameraBuffer didModifyRange:NSMakeRange(0, sizeof(struct metal_lighting_camera_data))];
+
+        // Create command buffer and encoder
+        id<MTLCommandBuffer> commandBuffer = [commandQueue commandBuffer];
+
+        // Add completion handler
+        [commandBuffer addCompletedHandler:^(id<MTLCommandBuffer> buffer) {
+            dispatch_semaphore_signal(semaphore);
+        }];
+
+        id<MTLRenderCommandEncoder> renderEncoder = [commandBuffer renderCommandEncoderWithDescriptor:renderPassDescriptor];
+
+        // Set pipeline state and depth stencil state
+        [renderEncoder setRenderPipelineState:(__bridge id<MTLRenderPipelineState>)ctx->lightingPipelineState];
+        [renderEncoder setDepthStencilState:(__bridge id<MTLDepthStencilState>)ctx->lightingDepthStencilState];
+
+        // Set vertex buffers
+        [renderEncoder setVertexBuffer:(__bridge id<MTLBuffer>)ctx->lightingVertexBuffer offset:0 atIndex:0];
+        [renderEncoder setVertexBuffer:instanceBuffer offset:0 atIndex:1];
+        [renderEncoder setVertexBuffer:cameraBuffer offset:0 atIndex:2];
+
+        // Set culling mode
+        [renderEncoder setCullMode:MTLCullModeBack];
+        [renderEncoder setFrontFacingWinding:MTLWindingCounterClockwise];
+
+        // Draw indexed primitives with instancing
+        [renderEncoder drawIndexedPrimitives:MTLPrimitiveTypeTriangle
+                                  indexCount:ctx->lightingIndexCount
+                                   indexType:MTLIndexTypeUInt16
+                                 indexBuffer:(__bridge id<MTLBuffer>)ctx->lightingIndexBuffer
+                           indexBufferOffset:0
+                               instanceCount:LIGHTING_NUM_INSTANCES];
+
+        [renderEncoder endEncoding];
+        [commandBuffer presentDrawable:drawable];
+        [commandBuffer commit];
+
+        // Update frame index
+        ctx->frameIndex = (ctx->frameIndex + 1) % MAX_FRAMES_IN_FLIGHT;
     }
-    [instanceBuffer didModifyRange:NSMakeRange(0, instanceBuffer.length)];
-
-    // Update camera data
-    id<MTLBuffer> cameraBuffer = (__bridge id<MTLBuffer>)ctx->lightingCameraDataBuffers[frameIndex];
-    struct metal_lighting_camera_data *cameraData = (struct metal_lighting_camera_data*)cameraBuffer.contents;
-    cameraData->perspectiveTransform = makePerspectiveLighting(45.0f * M_PI / 180.0f, 1.0f, 0.03f, 500.0f);
-    cameraData->worldTransform = makeIdentityLighting();
-    cameraData->worldNormalTransform = discardTranslationLighting(cameraData->worldTransform);
-    [cameraBuffer didModifyRange:NSMakeRange(0, sizeof(struct metal_lighting_camera_data))];
-
-    // Create command buffer and encoder
-    id<MTLCommandBuffer> commandBuffer = [commandQueue commandBuffer];
-    id<MTLRenderCommandEncoder> renderEncoder = [commandBuffer renderCommandEncoderWithDescriptor:renderPassDescriptor];
-
-    // Set pipeline state and depth stencil state
-    [renderEncoder setRenderPipelineState:(__bridge id<MTLRenderPipelineState>)ctx->lightingPipelineState];
-    [renderEncoder setDepthStencilState:(__bridge id<MTLDepthStencilState>)ctx->lightingDepthStencilState];
-
-    // Set vertex buffers
-    [renderEncoder setVertexBuffer:(__bridge id<MTLBuffer>)ctx->lightingVertexBuffer offset:0 atIndex:0];
-    [renderEncoder setVertexBuffer:instanceBuffer offset:0 atIndex:1];
-    [renderEncoder setVertexBuffer:cameraBuffer offset:0 atIndex:2];
-
-    // Set culling mode
-    [renderEncoder setCullMode:MTLCullModeBack];
-    [renderEncoder setFrontFacingWinding:MTLWindingCounterClockwise];
-
-    // Draw indexed primitives with instancing
-    [renderEncoder drawIndexedPrimitives:MTLPrimitiveTypeTriangle
-                              indexCount:ctx->lightingIndexCount
-                               indexType:MTLIndexTypeUInt16
-                             indexBuffer:(__bridge id<MTLBuffer>)ctx->lightingIndexBuffer
-                       indexBufferOffset:0
-                           instanceCount:LIGHTING_NUM_INSTANCES];
-
-    [renderEncoder endEncoding];
-    [commandBuffer presentDrawable:drawable];
-    [commandBuffer commit];
-
-    // Update frame index
-    ctx->frameIndex = (ctx->frameIndex + 1) % MAX_FRAMES_IN_FLIGHT;
 
     return true;
 }
