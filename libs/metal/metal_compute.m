@@ -381,6 +381,13 @@ bool metal_render_compute_cubes_impl(int r, int g, int b, int a) {
     id<MTLCommandQueue> commandQueue = (__bridge id<MTLCommandQueue>)ctx->commandQueue;
     CAMetalLayer *layer = (__bridge CAMetalLayer*)ctx->layer;
 
+    // Check for frame capture trigger
+    if (ctx->frameCaptureTrigger && !ctx->frameCaptureInProgress) {
+        if (!metal_trigger_frame_capture_impl()) {
+            metal_debug_log("Failed to start frame capture");
+        }
+    }
+
     // Get next drawable
     id<CAMetalDrawable> drawable = [layer nextDrawable];
     if (!drawable) {
@@ -524,6 +531,21 @@ bool metal_render_compute_cubes_impl(int r, int g, int b, int a) {
     [renderEncoder endEncoding];
     [commandBuffer presentDrawable:drawable];
     [commandBuffer commit];
+
+    // Handle frame capture completion after command buffer is committed
+    if (ctx->frameCaptureInProgress) {
+        // Wait for command buffer to complete before stopping capture
+        [commandBuffer waitUntilCompleted];
+
+        if (!metal_stop_frame_capture_and_open_impl()) {
+            metal_debug_log("Failed to stop frame capture");
+        }
+    }
+
+    // Check for auto-capture if no manual capture has occurred
+    if (!ctx->hasFrameCaptured) {
+        metal_check_auto_capture_impl();
+    }
 
     return true;
 }

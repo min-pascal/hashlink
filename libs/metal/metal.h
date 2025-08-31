@@ -157,6 +157,13 @@ struct metal_context {
     NSUInteger computeIndexCount;
     NSUInteger computeVertexCount;
     uint animationIndex;               // Frame counter for Mandelbrot animation
+
+    // Frame debugging support fields
+    bool frameCaptureTrigger;          // Flag to trigger GPU frame capture
+    bool frameCaptureInProgress;       // Flag indicating capture is in progress
+    bool hasFrameCaptured;             // Flag indicating if a capture has been completed
+    void *captureStartTime;            // NSDate* - time when app started for auto-capture timeout
+    double autoCaptureTimeoutSecs;     // Timeout for automatic capture triggering
 };
 
 // Global context
@@ -218,6 +225,12 @@ bool metal_render_textured_cubes_impl(int r, int g, int b, int a);
 bool metal_create_compute_cubes_impl(void);
 bool metal_render_compute_cubes_impl(int r, int g, int b, int a);
 bool metal_generate_mandelbrot_texture_impl(void);
+
+// Frame debugging functions (metal_frame_debugging.m)
+bool metal_trigger_frame_capture_impl(void);
+bool metal_check_auto_capture_impl(void);
+bool metal_init_frame_debugging_impl(void);
+bool metal_stop_frame_capture_and_open_impl(void);
 
 // Utility functions
 simd_float3 addFloat3(simd_float3 a, simd_float3 b);

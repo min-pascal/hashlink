@@ -9,3 +9,4 @@
 #include "metal_lighting.m"
 #include "metal_texturing.m"
 #include "metal_compute.m"
+#include "metal_frame_debugging.m"

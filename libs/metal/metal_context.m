@@ -131,6 +131,12 @@ bool metal_setup_window_context(vdynamic *win) {
             return false;
         }
 
+        // Initialize frame debugging
+        if (!metal_init_frame_debugging_impl()) {
+            metal_debug_log("Failed to initialize frame debugging");
+            return false;
+        }
+
         ctx->windowSetup = true;
         metal_debug_log("Window setup complete");
     }
