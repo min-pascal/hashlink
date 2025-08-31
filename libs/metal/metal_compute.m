@@ -1,17 +1,32 @@
 #include "metal.h"
 
-// Compute shader source for Mandelbrot texture generation
+// Compute shader source for Mandelbrot texture generation with animation
 NSString *computeShaderSource = @"\
 #include <metal_stdlib>\n\
 using namespace metal;\n\
 \n\
 kernel void mandelbrot_set(texture2d< half, access::write > tex [[texture(0)]],\n\
                            uint2 index [[thread_position_in_grid]],\n\
-                           uint2 gridSize [[threads_per_grid]])\n\
+                           uint2 gridSize [[threads_per_grid]],\n\
+                           device const uint* frame [[buffer(0)]])\n\
 {\n\
-    // Scale\n\
-    float x0 = 2.0 * index.x / gridSize.x - 1.5;\n\
-    float y0 = 2.0 * index.y / gridSize.y - 1.0;\n\
+    constexpr float kAnimationFrequency = 0.01;\n\
+    constexpr float kAnimationSpeed = 4;\n\
+    constexpr float kAnimationScaleLow = 0.62;\n\
+    constexpr float kAnimationScale = 0.38;\n\
+\n\
+    constexpr float2 kMandelbrotPixelOffset = {-0.2, -0.35};\n\
+    constexpr float2 kMandelbrotOrigin = {-1.2, -0.32};\n\
+    constexpr float2 kMandelbrotScale = {2.2, 2.0};\n\
+\n\
+    // Map time to zoom value in [kAnimationScaleLow, 1]\n\
+    float zoom = kAnimationScaleLow + kAnimationScale * cos(kAnimationFrequency * *frame);\n\
+    // Speed up zooming\n\
+    zoom = pow(zoom, kAnimationSpeed);\n\
+\n\
+    //Scale\n\
+    float x0 = zoom * kMandelbrotScale.x * ((float)index.x / gridSize.x + kMandelbrotPixelOffset.x) + kMandelbrotOrigin.x;\n\
+    float y0 = zoom * kMandelbrotScale.y * ((float)index.y / gridSize.y + kMandelbrotPixelOffset.y) + kMandelbrotOrigin.y;\n\
 \n\
     // Implement Mandelbrot set\n\
     float x = 0.0;\n\
@@ -206,12 +221,20 @@ bool metal_generate_mandelbrot_texture_impl(void) {
         ctx->mandelbrotTexture = (__bridge_retained void*)texture;
     }
 
+    // Update animation buffer with current frame counter
+    if (ctx->textureAnimationBuffer) {
+        uint *animPtr = (uint*)[(__bridge id<MTLBuffer>)ctx->textureAnimationBuffer contents];
+        *animPtr = (ctx->animationIndex++) % 5000;  // Match the C++ reference modulo 5000
+        [(__bridge id<MTLBuffer>)ctx->textureAnimationBuffer didModifyRange:NSMakeRange(0, sizeof(uint))];
+    }
+
     // Generate Mandelbrot texture using compute shader
     id<MTLCommandBuffer> commandBuffer = [commandQueue commandBuffer];
     id<MTLComputeCommandEncoder> computeEncoder = [commandBuffer computeCommandEncoder];
 
     [computeEncoder setComputePipelineState:(__bridge id<MTLComputePipelineState>)ctx->computePipelineState];
     [computeEncoder setTexture:(__bridge id<MTLTexture>)ctx->mandelbrotTexture atIndex:0];
+    [computeEncoder setBuffer:(__bridge id<MTLBuffer>)ctx->textureAnimationBuffer offset:0 atIndex:0];
 
     // Dispatch compute shader
     MTLSize gridSize = MTLSizeMake(128, 128, 1);
@@ -238,6 +261,15 @@ bool metal_create_compute_cubes_impl(void) {
     if (!metal_setup_compute_pipeline()) {
         return false;
     }
+
+    // Create animation buffer for compute shader
+    ctx->textureAnimationBuffer = (__bridge_retained void*)[device newBufferWithLength:sizeof(uint) options:MTLResourceStorageModeManaged];
+    if (!ctx->textureAnimationBuffer) {
+        return false;
+    }
+
+    // Initialize animation index
+    ctx->animationIndex = 0;
 
     // Generate the Mandelbrot texture
     if (!metal_generate_mandelbrot_texture_impl()) {
@@ -361,6 +393,29 @@ bool metal_render_compute_cubes_impl(int r, int g, int b, int a) {
     // Update animation
     ctx->angle += 0.002f;
 
+    // Create command buffer for both compute and render passes
+    id<MTLCommandBuffer> commandBuffer = [commandQueue commandBuffer];
+
+    // Update animation buffer and generate Mandelbrot texture each frame
+    if (ctx->textureAnimationBuffer) {
+        uint *animPtr = (uint*)[(__bridge id<MTLBuffer>)ctx->textureAnimationBuffer contents];
+        *animPtr = (ctx->animationIndex++) % 5000;
+        [(__bridge id<MTLBuffer>)ctx->textureAnimationBuffer didModifyRange:NSMakeRange(0, sizeof(uint))];
+
+        // Generate animated Mandelbrot texture using compute shader
+        id<MTLComputeCommandEncoder> computeEncoder = [commandBuffer computeCommandEncoder];
+        [computeEncoder setComputePipelineState:(__bridge id<MTLComputePipelineState>)ctx->computePipelineState];
+        [computeEncoder setTexture:(__bridge id<MTLTexture>)ctx->mandelbrotTexture atIndex:0];
+        [computeEncoder setBuffer:(__bridge id<MTLBuffer>)ctx->textureAnimationBuffer offset:0 atIndex:0];
+
+        MTLSize gridSize = MTLSizeMake(128, 128, 1);
+        NSUInteger threadGroupSize = [(__bridge id<MTLComputePipelineState>)ctx->computePipelineState maxTotalThreadsPerThreadgroup];
+        MTLSize threadgroupSize = MTLSizeMake(threadGroupSize, 1, 1);
+
+        [computeEncoder dispatchThreads:gridSize threadsPerThreadgroup:threadgroupSize];
+        [computeEncoder endEncoding];
+    }
+
     // Update instance data (same as textured cubes)
     id<MTLBuffer> instanceBuffer = (__bridge id<MTLBuffer>)ctx->computeInstanceDataBuffers[ctx->frameIndex];
     struct metal_lighting_instance_data *instanceData = (struct metal_lighting_instance_data *)[instanceBuffer contents];
@@ -425,10 +480,7 @@ bool metal_render_compute_cubes_impl(int r, int g, int b, int a) {
     // Mark camera buffer as modified
     [cameraBuffer didModifyRange:NSMakeRange(0, sizeof(struct metal_lighting_camera_data))];
 
-    // Create command buffer
-    id<MTLCommandBuffer> commandBuffer = [commandQueue commandBuffer];
-
-    // Create render pass descriptor
+    // Begin render pass
     MTLRenderPassDescriptor *renderPassDescriptor = [MTLRenderPassDescriptor renderPassDescriptor];
     renderPassDescriptor.colorAttachments[0].texture = drawable.texture;
     renderPassDescriptor.colorAttachments[0].loadAction = MTLLoadActionClear;
