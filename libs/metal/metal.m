@@ -8,3 +8,4 @@
 #include "metal_perspective.m"
 #include "metal_lighting.m"
 #include "metal_texturing.m"
+#include "metal_compute.m"
