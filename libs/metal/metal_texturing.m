@@ -15,9 +15,9 @@ struct v2f\n\
 \n\
 struct VertexData\n\
 {\n\
-    float3 position;\n\
-    float3 normal;\n\
-    float2 texcoord;\n\
+    float position[3];\n\
+    float normal[3];\n\
+    float texcoord[2];\n\
 };\n\
 \n\
 struct InstanceData\n\
@@ -43,16 +43,17 @@ v2f vertex vertexMain( device const VertexData* vertexData [[buffer(0)]],\n\
     v2f o;\n\
 \n\
     const device VertexData& vd = vertexData[ vertexId ];\n\
-    float4 pos = float4( vd.position, 1.0 );\n\
+    float4 pos = float4( vd.position[0], vd.position[1], vd.position[2], 1.0 );\n\
     pos = instanceData[ instanceId ].instanceTransform * pos;\n\
     pos = cameraData.perspectiveTransform * cameraData.worldTransform * pos;\n\
     o.position = pos;\n\
 \n\
-    float3 normal = instanceData[ instanceId ].instanceNormalTransform * vd.normal;\n\
+    float3 normal = float3( vd.normal[0], vd.normal[1], vd.normal[2] );\n\
+    normal = instanceData[ instanceId ].instanceNormalTransform * normal;\n\
     normal = cameraData.worldNormalTransform * normal;\n\
     o.normal = normal;\n\
 \n\
-    o.texcoord = vd.texcoord.xy;\n\
+    o.texcoord = float2( vd.texcoord[0], vd.texcoord[1] );\n\
     o.color = half3( instanceData[ instanceId ].instanceColor.rgb );\n\
     return o;\n\
 }\n\
@@ -138,7 +139,7 @@ bool metal_create_textured_cubes_impl(void) {
         return false;
     }
 
-    // Create cube vertices with texture coordinates (similar to 07-texturing.cpp)
+    // Create cube vertices with texture coordinates (exactly matching 07-texturing.cpp)
     const float s = 0.5f;
     struct metal_textured_vertex vertices[] = {
         // Front face
@@ -178,7 +179,7 @@ bool metal_create_textured_cubes_impl(void) {
         {{-s, -s, +s}, {0.0f, -1.0f, 0.0f}, {0.0f, 0.0f}}
     };
 
-    // Create indices for the cube
+    // Create indices for the cube (matching C++ reference exactly)
     uint16_t indices[] = {
         0,  1,  2,   2,  3,  0,  // front
         4,  5,  6,   6,  7,  4,  // right
@@ -188,28 +189,33 @@ bool metal_create_textured_cubes_impl(void) {
        20, 21, 22,  22, 23, 20,  // bottom
     };
 
-    // Create vertex buffer
+    // Create vertex buffer - use MTLResourceStorageModeManaged like C++ reference
     NSUInteger vertexDataSize = sizeof(vertices);
-    id<MTLBuffer> vertexBuffer = [device newBufferWithBytes:vertices length:vertexDataSize options:MTLResourceStorageModeShared];
+    id<MTLBuffer> vertexBuffer = [device newBufferWithBytes:vertices length:vertexDataSize options:MTLResourceStorageModeManaged];
     if (!vertexBuffer) {
         return false;
     }
     ctx->texturedVertexBuffer = (__bridge_retained void*)vertexBuffer;
     ctx->texturedVertexCount = sizeof(vertices) / sizeof(vertices[0]);
 
-    // Create index buffer
+    // Create index buffer - use MTLResourceStorageModeManaged like C++ reference
     NSUInteger indexDataSize = sizeof(indices);
-    id<MTLBuffer> indexBuffer = [device newBufferWithBytes:indices length:indexDataSize options:MTLResourceStorageModeShared];
+    id<MTLBuffer> indexBuffer = [device newBufferWithBytes:indices length:indexDataSize options:MTLResourceStorageModeManaged];
     if (!indexBuffer) {
         return false;
     }
     ctx->texturedIndexBuffer = (__bridge_retained void*)indexBuffer;
     ctx->texturedIndexCount = sizeof(indices) / sizeof(indices[0]);
 
-    // Create instance data buffers for multiple frames
-    NSUInteger instanceDataSize = NUM_INSTANCES * sizeof(struct metal_lighting_instance_data);
+    // Mark buffers as modified (required for MTLResourceStorageModeManaged)
+    [vertexBuffer didModifyRange:NSMakeRange(0, vertexDataSize)];
+    [indexBuffer didModifyRange:NSMakeRange(0, indexDataSize)];
+
+    // Create instance data buffers for multiple frames - use proper size for 1000 instances
+    const size_t kNumInstances = 1000; // 10x10x10 like C++ reference
+    NSUInteger instanceDataSize = kNumInstances * sizeof(struct metal_lighting_instance_data);
     for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-        id<MTLBuffer> instanceBuffer = [device newBufferWithLength:instanceDataSize options:MTLResourceStorageModeShared];
+        id<MTLBuffer> instanceBuffer = [device newBufferWithLength:instanceDataSize options:MTLResourceStorageModeManaged];
         if (!instanceBuffer) {
             return false;
         }
@@ -219,7 +225,7 @@ bool metal_create_textured_cubes_impl(void) {
     // Create camera data buffers for multiple frames
     NSUInteger cameraDataSize = sizeof(struct metal_lighting_camera_data);
     for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-        id<MTLBuffer> cameraBuffer = [device newBufferWithLength:cameraDataSize options:MTLResourceStorageModeShared];
+        id<MTLBuffer> cameraBuffer = [device newBufferWithLength:cameraDataSize options:MTLResourceStorageModeManaged];
         if (!cameraBuffer) {
             return false;
         }
@@ -234,7 +240,8 @@ bool metal_create_textured_cubes_impl(void) {
                                                                                                   width:textureWidth
                                                                                                  height:textureHeight
                                                                                               mipmapped:NO];
-    textureDescriptor.storageMode = MTLStorageModeShared;
+    // Use MTLStorageModeManaged like C++ reference
+    textureDescriptor.storageMode = MTLStorageModeManaged;
     textureDescriptor.usage = MTLTextureUsageShaderRead;
 
     id<MTLTexture> texture = [device newTextureWithDescriptor:textureDescriptor];
@@ -242,7 +249,7 @@ bool metal_create_textured_cubes_impl(void) {
         return false;
     }
 
-    // Generate checkerboard pattern data
+    // Generate checkerboard pattern data (exactly matching C++ reference)
     uint8_t *textureData = malloc(textureWidth * textureHeight * 4);
     for (size_t y = 0; y < textureHeight; ++y) {
         for (size_t x = 0; x < textureWidth; ++x) {
@@ -292,22 +299,23 @@ bool metal_render_textured_cubes_impl(int r, int g, int b, int a) {
     id<MTLBuffer> instanceBuffer = (__bridge id<MTLBuffer>)ctx->texturedInstanceDataBuffers[ctx->frameIndex];
     struct metal_lighting_instance_data *instanceData = (struct metal_lighting_instance_data *)[instanceBuffer contents];
 
-    simd_float3 objectPosition = {0.0f, 0.0f, -10.0f};
+    simd_float3 objectPosition = simd_make_float3(0.0f, 0.0f, -10.0f);
     const float scl = 0.2f;
 
     simd_float4x4 rt = makeTranslate(objectPosition);
     simd_float4x4 rr1 = makeYRotate(-ctx->angle);
     simd_float4x4 rr0 = makeXRotate(ctx->angle * 0.5f);
-    simd_float4x4 rtInv = makeTranslate((simd_float3){-objectPosition.x, -objectPosition.y, -objectPosition.z});
+    simd_float4x4 rtInv = makeTranslate(simd_make_float3(-objectPosition.x, -objectPosition.y, -objectPosition.z));
     simd_float4x4 fullObjectRot = simd_mul(simd_mul(simd_mul(rt, rr1), rr0), rtInv);
 
-    // Create 10x10x10 grid of cubes
+    // Create 10x10x10 grid of cubes (matching C++ reference exactly)
     const int kInstanceRows = 10;
     const int kInstanceColumns = 10;
     const int kInstanceDepth = 10;
+    const int kNumInstances = kInstanceRows * kInstanceColumns * kInstanceDepth;
 
     size_t ix = 0, iy = 0, iz = 0;
-    for (size_t i = 0; i < NUM_INSTANCES && i < (kInstanceRows * kInstanceColumns * kInstanceDepth); ++i) {
+    for (size_t i = 0; i < kNumInstances; ++i) {
         if (ix == kInstanceRows) {
             ix = 0;
             iy += 1;
@@ -317,26 +325,29 @@ bool metal_render_textured_cubes_impl(int r, int g, int b, int a) {
             iz += 1;
         }
 
-        simd_float4x4 scale = makeScale((simd_float3){scl, scl, scl});
+        simd_float4x4 scale = makeScale(simd_make_float3(scl, scl, scl));
         simd_float4x4 zrot = makeZRotate(ctx->angle * sinf((float)ix));
         simd_float4x4 yrot = makeYRotate(ctx->angle * cosf((float)iy));
 
         float x = ((float)ix - (float)kInstanceRows/2.0f) * (2.0f * scl) + scl;
         float y = ((float)iy - (float)kInstanceColumns/2.0f) * (2.0f * scl) + scl;
         float z = ((float)iz - (float)kInstanceDepth/2.0f) * (2.0f * scl);
-        simd_float4x4 translate = makeTranslate(addFloat3(objectPosition, (simd_float3){x, y, z}));
+        simd_float4x4 translate = makeTranslate(addFloat3(objectPosition, simd_make_float3(x, y, z)));
 
         instanceData[i].instanceTransform = simd_mul(simd_mul(simd_mul(simd_mul(fullObjectRot, translate), yrot), zrot), scale);
         instanceData[i].instanceNormalTransform = discardTranslation(instanceData[i].instanceTransform);
 
-        float iDivNumInstances = (float)i / (float)NUM_INSTANCES;
+        float iDivNumInstances = (float)i / (float)kNumInstances;
         float red = iDivNumInstances;
         float green = 1.0f - red;
         float blue = sinf(M_PI * 2.0f * iDivNumInstances);
-        instanceData[i].instanceColor = (simd_float4){red, green, blue, 1.0f};
+        instanceData[i].instanceColor = simd_make_float4(red, green, blue, 1.0f);
 
         ix += 1;
     }
+
+    // Mark instance buffer as modified (required for MTLResourceStorageModeManaged)
+    [instanceBuffer didModifyRange:NSMakeRange(0, instanceBuffer.length)];
 
     // Update camera data
     id<MTLBuffer> cameraBuffer = (__bridge id<MTLBuffer>)ctx->texturedCameraDataBuffers[ctx->frameIndex];
@@ -344,6 +355,9 @@ bool metal_render_textured_cubes_impl(int r, int g, int b, int a) {
     cameraData->perspectiveTransform = makePerspective(45.0f * M_PI / 180.0f, 1.0f, 0.03f, 500.0f);
     cameraData->worldTransform = makeIdentity();
     cameraData->worldNormalTransform = discardTranslation(cameraData->worldTransform);
+
+    // Mark camera buffer as modified (required for MTLResourceStorageModeManaged)
+    [cameraBuffer didModifyRange:NSMakeRange(0, sizeof(struct metal_lighting_camera_data))];
 
     // Create command buffer
     id<MTLCommandBuffer> commandBuffer = [commandQueue commandBuffer];
@@ -382,12 +396,13 @@ bool metal_render_textured_cubes_impl(int r, int g, int b, int a) {
     [renderEncoder setCullMode:MTLCullModeBack];
     [renderEncoder setFrontFacingWinding:MTLWindingCounterClockwise];
 
+    // Use the exact same number of instances as C++ reference
     [renderEncoder drawIndexedPrimitives:MTLPrimitiveTypeTriangle
                               indexCount:ctx->texturedIndexCount
                                indexType:MTLIndexTypeUInt16
                              indexBuffer:(__bridge id<MTLBuffer>)ctx->texturedIndexBuffer
                        indexBufferOffset:0
-                           instanceCount:NUM_INSTANCES];
+                           instanceCount:kNumInstances];
 
     [renderEncoder endEncoding];
     [commandBuffer presentDrawable:drawable];
