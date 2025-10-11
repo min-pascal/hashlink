@@ -58,6 +58,35 @@ HL_PRIM bool HL_NAME(commit_command_buffer)(vdynamic *cmdBuffer) {
     }
 }
 
+HL_PRIM void HL_NAME(wait_until_completed)(vdynamic *cmdBuffer) {
+    if (cmdBuffer == NULL) return;
+
+    @autoreleasepool {
+        id<MTLCommandBuffer> commandBuffer = (__bridge id<MTLCommandBuffer>)cmdBuffer;
+        
+        // Wait synchronously for the command buffer to finish execution
+        [commandBuffer waitUntilCompleted];
+        
+        metal_debug_log("wait_until_completed() - Command buffer completed");
+    }
+}
+
+HL_PRIM bool HL_NAME(commit_without_present)(vdynamic *cmdBuffer) {
+    if (cmdBuffer == NULL) {
+        metal_debug_log("ERROR: commit_without_present() - null command buffer");
+        return false;
+    }
+
+    @autoreleasepool {
+        id<MTLCommandBuffer> commandBuffer = (__bridge_transfer id<MTLCommandBuffer>)cmdBuffer;
+        
+        // Just commit, don't present drawable
+        [commandBuffer commit];
+        metal_debug_log("commit_without_present() - SUCCESS");
+        return true;
+    }
+}
+
 // Buffer management - Metal specific with proper memory management (new functions only)
 HL_PRIM vdynamic* HL_NAME(create_buffer)(int size, int usage) {
     if (ctx == NULL || ctx->device == NULL || size <= 0) {
@@ -175,6 +204,29 @@ HL_PRIM bool HL_NAME(upload_texture_data)(vdynamic *texture, vbyte *data, int wi
                           withBytes:data
                         bytesPerRow:bytesPerRow];
 
+        return true;
+    }
+}
+
+HL_PRIM bool HL_NAME(capture_texture_pixels)(vdynamic *texture, vbyte *data, int width, int height, int level) {
+    if (texture == NULL || data == NULL || width <= 0 || height <= 0) {
+        metal_debug_log("ERROR: capture_texture_pixels() - invalid parameters");
+        return false;
+    }
+
+    @autoreleasepool {
+        id<MTLTexture> metalTexture = (__bridge id<MTLTexture>)texture;
+
+        MTLRegion region = MTLRegionMake2D(0, 0, width, height);
+        NSUInteger bytesPerRow = width * 4; // Assuming RGBA8
+
+        // Read pixels from texture to buffer
+        [metalTexture getBytes:data
+                   bytesPerRow:bytesPerRow
+                    fromRegion:region
+                   mipmapLevel:level];
+
+        metal_debug_log("capture_texture_pixels() - SUCCESS (width=%d, height=%d, level=%d)", width, height, level);
         return true;
     }
 }
@@ -324,6 +376,72 @@ HL_PRIM vdynamic* HL_NAME(begin_render_pass)(vdynamic *cmdBuffer, int r, int g, 
     }
 }
 
+HL_PRIM vdynamic* HL_NAME(resume_render_pass)(vdynamic *cmdBuffer) {
+    if (ctx == NULL || cmdBuffer == NULL) {
+        metal_debug_log("ERROR: resume_render_pass() - ctx=%p cmdBuffer=%p", ctx, cmdBuffer);
+        return NULL;
+    }
+    
+    if (ctx->currentDrawable == NULL) {
+        metal_debug_log("ERROR: resume_render_pass() - no currentDrawable!");
+        return NULL;
+    }
+
+    @autoreleasepool {
+        id<MTLCommandBuffer> commandBuffer = (__bridge id<MTLCommandBuffer>)cmdBuffer;
+        id<CAMetalDrawable> drawable = (__bridge id<CAMetalDrawable>)ctx->currentDrawable;
+        
+        metal_debug_log("resume_render_pass() - drawable=%p texture=%p", drawable, drawable.texture);
+        
+        // Update command buffer reference
+        ctx->currentCommandBuffer = (__bridge void*)commandBuffer;
+
+        MTLRenderPassDescriptor *renderPassDescriptor = [MTLRenderPassDescriptor renderPassDescriptor];
+        renderPassDescriptor.colorAttachments[0].texture = drawable.texture;
+        renderPassDescriptor.colorAttachments[0].loadAction = MTLLoadActionLoad;  // LOAD existing content!
+        renderPassDescriptor.colorAttachments[0].storeAction = MTLStoreActionStore;
+
+        id<MTLRenderCommandEncoder> encoder = [commandBuffer renderCommandEncoderWithDescriptor:renderPassDescriptor];
+        if (encoder == NULL) {
+            metal_debug_log("ERROR: resume_render_pass() - failed to create encoder!");
+            return NULL;
+        }
+
+        metal_debug_log("resume_render_pass() - SUCCESS");
+        return (vdynamic*)(__bridge_retained void*)encoder;
+    }
+}
+
+HL_PRIM vdynamic* HL_NAME(begin_texture_render_pass)(vdynamic *cmdBuffer, vdynamic *texture, int r, int g, int b, int a) {
+    if (ctx == NULL || cmdBuffer == NULL || texture == NULL) {
+        metal_debug_log("ERROR: begin_texture_render_pass() - invalid parameters");
+        return NULL;
+    }
+
+    @autoreleasepool {
+        id<MTLCommandBuffer> commandBuffer = (__bridge id<MTLCommandBuffer>)cmdBuffer;
+        id<MTLTexture> metalTexture = (__bridge id<MTLTexture>)texture;
+        
+        // Update command buffer reference
+        ctx->currentCommandBuffer = (__bridge void*)commandBuffer;
+
+        MTLRenderPassDescriptor *renderPassDescriptor = [MTLRenderPassDescriptor renderPassDescriptor];
+        renderPassDescriptor.colorAttachments[0].texture = metalTexture;
+        renderPassDescriptor.colorAttachments[0].loadAction = MTLLoadActionClear;
+        renderPassDescriptor.colorAttachments[0].storeAction = MTLStoreActionStore;
+        renderPassDescriptor.colorAttachments[0].clearColor = MTLClearColorMake(r/255.0, g/255.0, b/255.0, a/255.0);
+
+        id<MTLRenderCommandEncoder> encoder = [commandBuffer renderCommandEncoderWithDescriptor:renderPassDescriptor];
+        if (encoder == NULL) {
+            metal_debug_log("ERROR: begin_texture_render_pass() - failed to create encoder!");
+            return NULL;
+        }
+
+        metal_debug_log("begin_texture_render_pass() - SUCCESS");
+        return (vdynamic*)(__bridge_retained void*)encoder;
+    }
+}
+
 HL_PRIM void HL_NAME(set_render_pipeline_state)(vdynamic *encoder, vdynamic *pipeline) {
     if (encoder == NULL || pipeline == NULL) return;
 
@@ -464,12 +582,15 @@ HL_PRIM void HL_NAME(set_scissor_rect)(vdynamic *encoder, int x, int y, int widt
 DEFINE_PRIM(_DYN, get_device, _NO_ARG);
 DEFINE_PRIM(_DYN, create_command_buffer, _NO_ARG);
 DEFINE_PRIM(_BOOL, commit_command_buffer, _DYN);
+DEFINE_PRIM(_BOOL, commit_without_present, _DYN);
+DEFINE_PRIM(_VOID, wait_until_completed, _DYN);
 
 DEFINE_PRIM(_DYN, create_buffer, _I32 _I32);
 DEFINE_PRIM(_BOOL, upload_buffer_data, _DYN _BYTES _I32 _I32);
 
 DEFINE_PRIM(_DYN, create_texture, _I32 _I32 _I32 _I32);
 DEFINE_PRIM(_BOOL, upload_texture_data, _DYN _BYTES _I32 _I32 _I32);
+DEFINE_PRIM(_BOOL, capture_texture_pixels, _DYN _BYTES _I32 _I32 _I32);
 DEFINE_PRIM(_VOID, dispose_texture, _DYN);
 
 DEFINE_PRIM(_DYN, compile_shader, _STRING _I32);
@@ -477,6 +598,8 @@ DEFINE_PRIM(_DYN, create_render_pipeline, _DYN _DYN _STRING);
 DEFINE_PRIM(_VOID, dispose_pipeline, _DYN);
 
 DEFINE_PRIM(_DYN, begin_render_pass, _DYN _I32 _I32 _I32 _I32);
+DEFINE_PRIM(_DYN, resume_render_pass, _DYN);
+DEFINE_PRIM(_DYN, begin_texture_render_pass, _DYN _DYN _I32 _I32 _I32 _I32);
 DEFINE_PRIM(_VOID, set_render_pipeline_state, _DYN _DYN);
 DEFINE_PRIM(_VOID, set_vertex_buffer, _DYN _DYN _I32 _I32);
 DEFINE_PRIM(_VOID, set_fragment_texture, _DYN _DYN _I32);
