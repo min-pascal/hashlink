@@ -1,4 +1,3 @@
-
 LBITS := $(shell getconf LONG_BIT)
 MARCH ?= $(LBITS)
 PREFIX ?= /usr/local
@@ -224,17 +223,14 @@ endif
 
 all: libhl libs
 ifeq ($(ARCH),arm64)
-	$(warning HashLink vm is not supported on arm64, skipping)
-else
-all: hl
+	$(warning Building HashLink on arm64 (native debugger not available))
 endif
+all: hl
 
 install:
 	$(UNAME)==Darwin && ${MAKE} uninstall
-ifneq ($(ARCH),arm64)
 	mkdir -p $(INSTALL_BIN_DIR)
 	cp hl $(INSTALL_BIN_DIR)
-endif
 	mkdir -p $(INSTALL_LIB_DIR)
 	cp *.hdll $(INSTALL_LIB_DIR)
 	cp libhl.${LIBEXT} $(INSTALL_LIB_DIR)
