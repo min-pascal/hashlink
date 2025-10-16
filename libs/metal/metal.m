@@ -1,0 +1,13 @@
+// Main entry point that includes all modules
+#include "metal.h"
+#include "metal_context.m"
+#include "metal_shaders.m"
+#include "metal_buffers.m"
+#include "metal_rendering.m"
+#include "metal_advanced.m"
+#include "metal_perspective.m"
+#include "metal_lighting.m"
+#include "metal_texturing.m"
+#include "metal_compute.m"
+#include "metal_frame_debugging.m"
+#include "metal_exports.m"
