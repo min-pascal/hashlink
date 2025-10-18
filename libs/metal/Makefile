@@ -1,7 +1,9 @@
 # Makefile for Metal library
 
+BUILD_OUTPUT_DIR ?= ../../build-x86_64
+
 CFLAGS = -Wall -O3 -I ../../src -std=c99 -fPIC -fobjc-arc
-LIBS = -L../.. -lhl -L/usr/local/lib -lSDL2
+LIBS = -L$(BUILD_OUTPUT_DIR) -lhl -L/usr/local/lib -lSDL2
 ARCH_FLAGS = -arch x86_64
 
 UNAME := $(shell uname)
@@ -26,7 +28,8 @@ all: $(LIB)
 
 # Rule to create the dynamic library
 $(LIB): $(OBJECTS)
-	${CC} $(LIBFLAGS) -o ../../$(LIB) $^ $(LIBS) $(FRAMEWORKS)
+	mkdir -p $(BUILD_OUTPUT_DIR)
+	${CC} $(LIBFLAGS) -o $(BUILD_OUTPUT_DIR)/$(LIB) $^ $(LIBS) $(FRAMEWORKS)
 	@rm -f $(OBJECTS)
 
 # Rule to compile .m files to .o files
@@ -34,10 +37,10 @@ $(LIB): $(OBJECTS)
 	${CC} ${CFLAGS} -o $@ -c $<
 
 install: $(LIB)
-	cp $(LIB) $(INSTALL_DIR)
+	cp $(BUILD_OUTPUT_DIR)/$(LIB) $(INSTALL_DIR)
 
 clean:
-	rm -rf $(OBJECTS) ../../$(LIB)
+	rm -rf $(OBJECTS) $(BUILD_OUTPUT_DIR)/$(LIB)
 
 .PHONY: all clean install
 

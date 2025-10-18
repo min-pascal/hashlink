@@ -7,8 +7,9 @@ INSTALL_BIN_DIR ?= $(PREFIX)/bin
 INSTALL_LIB_DIR ?= $(PREFIX)/lib
 INSTALL_INCLUDE_DIR ?= $(PREFIX)/include
 
-LIBS=fmt sdl ssl openal ui uv mysql sqlite heaps
+LIBS=fmt sdl ssl openal ui uv mysql sqlite heaps metal
 ARCH ?= $(shell uname -m)
+BUILD_OUTPUT_DIR ?= build-x86_64
 
 CFLAGS = -Wall -O3 -I src -std=c11 -D LIBHL_EXPORTS
 LFLAGS = -L. -lhl
@@ -222,11 +223,11 @@ install:
 	$(UNAME)==Darwin && ${MAKE} uninstall
 ifneq ($(ARCH),arm64)
 	mkdir -p $(INSTALL_BIN_DIR)
-	cp hl $(INSTALL_BIN_DIR)
+	cp $(BUILD_OUTPUT_DIR)/hl $(INSTALL_BIN_DIR)
 endif
 	mkdir -p $(INSTALL_LIB_DIR)
-	cp *.hdll $(INSTALL_LIB_DIR)
-	cp libhl.${LIBEXT} $(INSTALL_LIB_DIR)
+	cp $(BUILD_OUTPUT_DIR)/*.hdll $(INSTALL_LIB_DIR)
+	cp $(BUILD_OUTPUT_DIR)/libhl.${LIBEXT} $(INSTALL_LIB_DIR)
 	mkdir -p $(INSTALL_INCLUDE_DIR)
 	cp src/hl.h src/hlc.h src/hlc_main.c $(INSTALL_INCLUDE_DIR)
 
@@ -243,25 +244,31 @@ src/std/regexp.o: src/std/regexp.c
 	${CC} ${CFLAGS} -o $@ -c $< ${PCRE_FLAGS}
 
 libhl: ${LIB}
-	${CC} ${CFLAGS} -o libhl.$(LIBEXT) -m${MARCH} ${LIBFLAGS} ${LHL_LINK_FLAGS} -shared ${LIB} -lpthread -lm
+	mkdir -p $(BUILD_OUTPUT_DIR)
+	${CC} ${CFLAGS} -o $(BUILD_OUTPUT_DIR)/libhl.$(LIBEXT) -m${MARCH} ${LIBFLAGS} ${LHL_LINK_FLAGS} -shared ${LIB} -lpthread -lm
 
 hlc: ${BOOT}
-	${CC} ${CFLAGS} -o hlc ${BOOT} ${LFLAGS} ${EXTRA_LFLAGS}
+	mkdir -p $(BUILD_OUTPUT_DIR)
+	${CC} ${CFLAGS} -o $(BUILD_OUTPUT_DIR)/hlc ${BOOT} ${LFLAGS} ${EXTRA_LFLAGS}
 
 hl: ${HL} libhl
-	${CC} ${CFLAGS} -o hl ${HL} ${LFLAGS} ${EXTRA_LFLAGS} ${HLFLAGS}
+	mkdir -p $(BUILD_OUTPUT_DIR)
+	${CC} ${CFLAGS} -o $(BUILD_OUTPUT_DIR)/hl ${HL} -L$(BUILD_OUTPUT_DIR) ${LFLAGS} ${EXTRA_LFLAGS} ${HLFLAGS}
 
 libs/fmt/%.o: libs/fmt/%.c
 	${CC} ${CFLAGS} -o $@ -c $< ${FMT_INCLUDE}
 
 fmt: ${FMT} libhl
-	${CC} ${CFLAGS} -shared -o fmt.hdll ${FMT} ${LIBFLAGS} -L. -lhl -lpng $(LIBTURBOJPEG) -lz -lvorbisfile
+	mkdir -p $(BUILD_OUTPUT_DIR)
+	${CC} ${CFLAGS} -shared -o $(BUILD_OUTPUT_DIR)/fmt.hdll ${FMT} ${LIBFLAGS} -L$(BUILD_OUTPUT_DIR) -lhl -lpng $(LIBTURBOJPEG) -lz -lvorbisfile
 
 sdl: ${SDL} libhl
-	${CC} ${CFLAGS} -shared -o sdl.hdll ${SDL} ${LIBFLAGS} -L. -lhl -lSDL2 $(LIBOPENGL)
+	mkdir -p $(BUILD_OUTPUT_DIR)
+	${CC} ${CFLAGS} -shared -o $(BUILD_OUTPUT_DIR)/sdl.hdll ${SDL} ${LIBFLAGS} -L$(BUILD_OUTPUT_DIR) -lhl -lSDL2 $(LIBOPENGL)
 
 openal: ${OPENAL} libhl
-	${CC} ${CFLAGS} -shared -o openal.hdll ${OPENAL} ${LIBFLAGS} -L. -lhl $(LIBOPENAL)
+	mkdir -p $(BUILD_OUTPUT_DIR)
+	${CC} ${CFLAGS} -shared -o $(BUILD_OUTPUT_DIR)/openal.hdll ${OPENAL} ${LIBFLAGS} -L$(BUILD_OUTPUT_DIR) -lhl $(LIBOPENAL)
 
 ./include/mbedtls/%.o: ./include/mbedtls/%.c
 	${CC} ${CFLAGS} -o $@ -c $< ${SSL_CFLAGS}
@@ -272,19 +279,24 @@ libs/ssl/ssl.o: libs/ssl/ssl.c
 	${CC} ${CFLAGS} -o $@ -c $< ${SSL_CFLAGS}
 
 ssl: ${SSL} libhl
-	${CC} ${CFLAGS} ${SSL_CFLAGS} -shared -o ssl.hdll ${SSL} ${LIBFLAGS} -L. -lhl ${SSL_LDLIBS} $(LIBSSL)
+	mkdir -p $(BUILD_OUTPUT_DIR)
+	${CC} ${CFLAGS} ${SSL_CFLAGS} -shared -o $(BUILD_OUTPUT_DIR)/ssl.hdll ${SSL} ${LIBFLAGS} -L$(BUILD_OUTPUT_DIR) -lhl ${SSL_LDLIBS} $(LIBSSL)
 
 ui: ${UI} libhl
-	${CC} ${CFLAGS} -shared -o ui.hdll ${UI} ${LIBFLAGS} -L. -lhl
+	mkdir -p $(BUILD_OUTPUT_DIR)
+	${CC} ${CFLAGS} -shared -o $(BUILD_OUTPUT_DIR)/ui.hdll ${UI} ${LIBFLAGS} -L$(BUILD_OUTPUT_DIR) -lhl
 
 uv: ${UV} libhl
-	${CC} ${CFLAGS} -shared -o uv.hdll ${UV} ${LIBFLAGS} -L. -lhl -luv
+	mkdir -p $(BUILD_OUTPUT_DIR)
+	${CC} ${CFLAGS} -shared -o $(BUILD_OUTPUT_DIR)/uv.hdll ${UV} ${LIBFLAGS} -L$(BUILD_OUTPUT_DIR) -lhl -luv
 
 mysql: ${MYSQL} libhl
-	${CC} ${CFLAGS} -shared -o mysql.hdll ${MYSQL} ${LIBFLAGS} -L. -lhl
+	mkdir -p $(BUILD_OUTPUT_DIR)
+	${CC} ${CFLAGS} -shared -o $(BUILD_OUTPUT_DIR)/mysql.hdll ${MYSQL} ${LIBFLAGS} -L$(BUILD_OUTPUT_DIR) -lhl
 
 sqlite: ${SQLITE} libhl
-	${CC} ${CFLAGS} -shared -o sqlite.hdll ${SQLITE} ${LIBFLAGS} -L. -lhl -lsqlite3
+	mkdir -p $(BUILD_OUTPUT_DIR)
+	${CC} ${CFLAGS} -shared -o $(BUILD_OUTPUT_DIR)/sqlite.hdll ${SQLITE} ${LIBFLAGS} -L$(BUILD_OUTPUT_DIR) -lhl -lsqlite3
 
 CXXFLAGS:=$(filter-out -std=c11,$(CFLAGS)) -std=c++11
 
@@ -301,7 +313,11 @@ CXXFLAGS:=$(filter-out -std=c11,$(CFLAGS)) -std=c++11
 	${CC} ${CXXFLAGS} -o $@ -c $< ${HEAPS_CFLAGS}
 
 heaps: ${HEAPS} libhl
-	${CXX} ${CFLAGS} ${HEAPS_CFLAGS} -shared -o heaps.hdll ${HEAPS} ${LIBFLAGS} -L. -lhl
+	mkdir -p $(BUILD_OUTPUT_DIR)
+	${CXX} ${CFLAGS} ${HEAPS_CFLAGS} -shared -o $(BUILD_OUTPUT_DIR)/heaps.hdll ${HEAPS} ${LIBFLAGS} -L$(BUILD_OUTPUT_DIR) -lhl
+
+metal: libhl
+	(cd libs/metal && ${MAKE} BUILD_OUTPUT_DIR=$(shell pwd)/$(BUILD_OUTPUT_DIR))
 
 mesa:
 	(cd libs/mesa && ${MAKE})
@@ -379,6 +395,6 @@ clean_o:
 	rm -f ${STD} ${BOOT} ${RUNTIME} ${PCRE} ${HL} ${FMT} ${SDL} ${SSL} ${OPENAL} ${UI} ${UV} ${MYSQL} ${SQLITE} ${HEAPS} ${HL_DEBUG}
 
 clean: clean_o
-	rm -f hl hl.exe libhl.$(LIBEXT) *.hdll
+	rm -rf $(BUILD_OUTPUT_DIR)
 
 .PHONY: libhl hl hlc fmt sdl libs release
