@@ -8,6 +8,7 @@ INSTALL_INCLUDE_DIR ?= $(PREFIX)/include
 
 LIBS=fmt sdl ssl openal ui uv mysql sqlite heaps
 ARCH ?= $(shell uname -m)
+BUILD_OUTPUT_DIR ?= build-arm64
 
 CFLAGS = -Wall -O3 -I src -std=c11 -D LIBHL_EXPORTS
 LFLAGS = -L. -lhl
@@ -230,10 +231,10 @@ all: hl
 install:
 	$(UNAME)==Darwin && ${MAKE} uninstall
 	mkdir -p $(INSTALL_BIN_DIR)
-	cp hl $(INSTALL_BIN_DIR)
+	cp $(BUILD_OUTPUT_DIR)/hl $(INSTALL_BIN_DIR)
 	mkdir -p $(INSTALL_LIB_DIR)
-	cp *.hdll $(INSTALL_LIB_DIR)
-	cp libhl.${LIBEXT} $(INSTALL_LIB_DIR)
+	cp $(BUILD_OUTPUT_DIR)/*.hdll $(INSTALL_LIB_DIR)
+	cp $(BUILD_OUTPUT_DIR)/libhl.${LIBEXT} $(INSTALL_LIB_DIR)
 	mkdir -p $(INSTALL_INCLUDE_DIR)
 	cp src/hl.h src/hlc.h src/hlc_main.c $(INSTALL_INCLUDE_DIR)
 
@@ -250,25 +251,31 @@ src/std/regexp.o: src/std/regexp.c
 	${CC} ${CFLAGS} -o $@ -c $< ${PCRE_FLAGS}
 
 libhl: ${LIB}
-	${CC} ${CFLAGS} -o libhl.$(LIBEXT) -m${MARCH} ${LIBFLAGS} ${LHL_LINK_FLAGS} -shared $^ ${LIBHL_LDLIBS}
+	mkdir -p $(BUILD_OUTPUT_DIR)
+	${CC} ${CFLAGS} -o $(BUILD_OUTPUT_DIR)/libhl.$(LIBEXT) -m${MARCH} ${LIBFLAGS} ${LHL_LINK_FLAGS} -shared $^ ${LIBHL_LDLIBS}
 
 hlc: ${BOOT}
-	${CC} ${CFLAGS} -o hlc ${BOOT} ${LFLAGS} ${EXTRA_LFLAGS} ${HLC_LDLIBS}
+	mkdir -p $(BUILD_OUTPUT_DIR)
+	${CC} ${CFLAGS} -o $(BUILD_OUTPUT_DIR)/hlc ${BOOT} ${LFLAGS} ${EXTRA_LFLAGS} ${HLC_LDLIBS}
 
 hl: ${HL} libhl
-	${CC} ${CFLAGS} -o hl ${HL} ${LFLAGS} ${EXTRA_LFLAGS} ${HLFLAGS}
+	mkdir -p $(BUILD_OUTPUT_DIR)
+	${CC} ${CFLAGS} -o $(BUILD_OUTPUT_DIR)/hl ${HL} -L$(BUILD_OUTPUT_DIR) ${LFLAGS} ${EXTRA_LFLAGS} ${HLFLAGS}
 
 libs/fmt/%.o: libs/fmt/%.c
 	${CC} ${CFLAGS} -o $@ -c $< ${FMT_INCLUDE}
 
 fmt: ${FMT} libhl
-	${CC} ${CFLAGS} -shared -o fmt.hdll ${FMT} ${LIBFLAGS} -L. -lhl -lpng $(LIBTURBOJPEG) -lz -lvorbisfile
+	mkdir -p $(BUILD_OUTPUT_DIR)
+	${CC} ${CFLAGS} -shared -o $(BUILD_OUTPUT_DIR)/fmt.hdll ${FMT} ${LIBFLAGS} -L$(BUILD_OUTPUT_DIR) -lhl -lpng $(LIBTURBOJPEG) -lz -lvorbisfile
 
 sdl: ${SDL} libhl
-	${CC} ${CFLAGS} -shared -o sdl.hdll ${SDL} ${LIBFLAGS} -L. -lhl $(SDL_LINK_FLAGS) $(LIBOPENGL)
+	mkdir -p $(BUILD_OUTPUT_DIR)
+	${CC} ${CFLAGS} -shared -o $(BUILD_OUTPUT_DIR)/sdl.hdll ${SDL} ${LIBFLAGS} -L$(BUILD_OUTPUT_DIR) -lhl $(SDL_LINK_FLAGS) $(LIBOPENGL)
 
 openal: ${OPENAL} libhl
-	${CC} ${CFLAGS} -shared -o openal.hdll ${OPENAL} ${LIBFLAGS} -L. -lhl $(LIBOPENAL)
+	mkdir -p $(BUILD_OUTPUT_DIR)
+	${CC} ${CFLAGS} -shared -o $(BUILD_OUTPUT_DIR)/openal.hdll ${OPENAL} ${LIBFLAGS} -L$(BUILD_OUTPUT_DIR) -lhl $(LIBOPENAL)
 
 ./include/mbedtls/%.o: ./include/mbedtls/%.c
 	${CC} ${CFLAGS} -o $@ -c $< ${SSL_CFLAGS}
@@ -279,19 +286,24 @@ libs/ssl/ssl.o: libs/ssl/ssl.c
 	${CC} ${CFLAGS} -o $@ -c $< ${SSL_CFLAGS}
 
 ssl: ${SSL} libhl
-	${CC} ${CFLAGS} ${SSL_CFLAGS} -shared -o ssl.hdll ${SSL} ${LIBFLAGS} -L. -lhl ${SSL_LDLIBS} $(LIBSSL)
+	mkdir -p $(BUILD_OUTPUT_DIR)
+	${CC} ${CFLAGS} ${SSL_CFLAGS} -shared -o $(BUILD_OUTPUT_DIR)/ssl.hdll ${SSL} ${LIBFLAGS} -L$(BUILD_OUTPUT_DIR) -lhl ${SSL_LDLIBS} $(LIBSSL)
 
 ui: ${UI} libhl
-	${CC} ${CFLAGS} -shared -o ui.hdll ${UI} ${LIBFLAGS} -L. -lhl
+	mkdir -p $(BUILD_OUTPUT_DIR)
+	${CC} ${CFLAGS} -shared -o $(BUILD_OUTPUT_DIR)/ui.hdll ${UI} ${LIBFLAGS} -L$(BUILD_OUTPUT_DIR) -lhl
 
 uv: ${UV} libhl
-	${CC} ${CFLAGS} -shared -o uv.hdll ${UV} ${LIBFLAGS} -L. -lhl -luv
+	mkdir -p $(BUILD_OUTPUT_DIR)
+	${CC} ${CFLAGS} -shared -o $(BUILD_OUTPUT_DIR)/uv.hdll ${UV} ${LIBFLAGS} -L$(BUILD_OUTPUT_DIR) -lhl -luv
 
 mysql: ${MYSQL} libhl
-	${CC} ${CFLAGS} -shared -o mysql.hdll ${MYSQL} ${LIBFLAGS} -L. -lhl ${MYSQL_LDLIBS}
+	mkdir -p $(BUILD_OUTPUT_DIR)
+	${CC} ${CFLAGS} -shared -o $(BUILD_OUTPUT_DIR)/mysql.hdll ${MYSQL} ${LIBFLAGS} -L$(BUILD_OUTPUT_DIR) -lhl ${MYSQL_LDLIBS}
 
 sqlite: ${SQLITE} libhl
-	${CC} ${CFLAGS} -shared -o sqlite.hdll ${SQLITE} ${LIBFLAGS} -L. -lhl -lsqlite3
+	mkdir -p $(BUILD_OUTPUT_DIR)
+	${CC} ${CFLAGS} -shared -o $(BUILD_OUTPUT_DIR)/sqlite.hdll ${SQLITE} ${LIBFLAGS} -L$(BUILD_OUTPUT_DIR) -lhl -lsqlite3
 
 CXXFLAGS:=$(filter-out -std=c11,$(CFLAGS)) -std=c++11
 
@@ -308,7 +320,8 @@ CXXFLAGS:=$(filter-out -std=c11,$(CFLAGS)) -std=c++11
 	${CC} ${CXXFLAGS} -o $@ -c $< ${HEAPS_CFLAGS}
 
 heaps: ${HEAPS} libhl
-	${CXX} ${CFLAGS} ${HEAPS_CFLAGS} -shared -o heaps.hdll ${HEAPS} ${LIBFLAGS} -L. -lhl
+	mkdir -p $(BUILD_OUTPUT_DIR)
+	${CXX} ${CFLAGS} ${HEAPS_CFLAGS} -shared -o $(BUILD_OUTPUT_DIR)/heaps.hdll ${HEAPS} ${LIBFLAGS} -L$(BUILD_OUTPUT_DIR) -lhl
 
 mesa:
 	(cd libs/mesa && ${MAKE})
@@ -361,9 +374,9 @@ release_win:
 
 release_linux release_osx:
 ifeq ($(ARCH),arm64)
-	cp libhl.$(LIBEXT) *.hdll $(PACKAGE_NAME)
+	cp $(BUILD_OUTPUT_DIR)/libhl.$(LIBEXT) $(BUILD_OUTPUT_DIR)/*.hdll $(PACKAGE_NAME)
 else
-	cp hl libhl.$(LIBEXT) *.hdll $(PACKAGE_NAME)
+	cp $(BUILD_OUTPUT_DIR)/hl $(BUILD_OUTPUT_DIR)/libhl.$(LIBEXT) $(BUILD_OUTPUT_DIR)/*.hdll $(PACKAGE_NAME)
 endif
 	tar -cvzf $(PACKAGE_NAME).tar.gz $(PACKAGE_NAME)
 	rm -rf $(PACKAGE_NAME)
@@ -374,7 +387,7 @@ codesign_osx:
 	openssl req -x509 -newkey rsa:4096 -keyout key.pem -nodes -days 365 -subj '/CN=hl-cert' -outform der -out cert.cer -extensions v3_req -config openssl.cnf
 	sudo security add-trusted-cert -d -k /Library/Keychains/System.keychain cert.cer
 	sudo security import key.pem -k /Library/Keychains/System.keychain -A
-	codesign --entitlements other/osx/entitlements.xml -fs hl-cert hl
+	codesign --entitlements other/osx/entitlements.xml -fs hl-cert $(BUILD_OUTPUT_DIR)/hl
 	rm key.pem cert.cer openssl.cnf
 
 .SUFFIXES : .c .o
@@ -386,6 +399,6 @@ clean_o:
 	rm -f ${STD} ${BOOT} ${RUNTIME} ${PCRE} ${HL} ${FMT} ${SDL} ${SSL} ${OPENAL} ${UI} ${UV} ${MYSQL} ${SQLITE} ${HEAPS} ${HL_DEBUG}
 
 clean: clean_o
-	rm -f hl hl.exe libhl.$(LIBEXT) *.hdll
+	rm -rf $(BUILD_OUTPUT_DIR)
 
 .PHONY: libhl hl hlc fmt sdl libs release

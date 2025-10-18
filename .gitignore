@@ -57,3 +57,6 @@ args.txt
 /other/benchs/hlc
 
 /.idea
+# Architecture-specific builds
+build-arm64/
+build-x86_64/
