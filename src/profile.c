@@ -55,6 +55,7 @@
 #define MAX_STACK_COUNT 2048
 
 HL_API double hl_sys_time( void );
+HL_API void	hl_sys_sleep( double time );
 HL_API void hl_setup_profiler( void *, void * );
 int hl_module_capture_stack_range( void *stack_top, void **stack_ptr, void **out, int size );
 uchar *hl_module_resolve_symbol_full( void *addr, uchar *out, int *outSize, int **r_debug_addr );
@@ -279,6 +280,7 @@ static void hl_profile_loop( void *_ ) {
 		if( t < next || data.profiling_pause ) {
 			if( !(t < next) ) next = t;
 			data.waitLoop = false;
+			if( data.profiling_pause ) hl_sys_sleep(0.001);
 			continue;
 		}
 		hl_threads_info *threads = hl_gc_threads_info();
@@ -426,6 +428,12 @@ static void profile_dump( vbyte* ptr ) {
 
 	char* filename = ptr == NULL ? "hlprofile.dump" : hl_to_utf8((uchar*)ptr);
 	FILE *f = fopen(filename,"wb");
+	if( f == NULL ) {
+		data.profiling_pause--;
+		printf("Failed to open file %s, 0 profile samples saved\n", filename);
+		hl_error("Failed to open file");
+		return;
+	}
 	int version = HL_VERSION;
 	fwrite("PROF",1,4,f);
 	fwrite(&version,1,4,f);
@@ -508,7 +516,7 @@ static void profile_dump( vbyte* ptr ) {
 	write_names(data.olds,f);
 	// done
 	fclose(f);
-	printf("%d profile samples saved\n", samples);
+	printf("%d profile samples saved to %s\n", samples, filename);
 	data.profiling_pause--;
 }
 

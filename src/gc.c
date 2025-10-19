@@ -1074,7 +1074,7 @@ void *hl_malloc( hl_alloc *a, int size ) {
 	if( !size ) return NULL;
 	size += hl_pad_size(size,&hlt_dyn);
 	if( b == NULL || b->size <= size ) {
-		int alloc = size < 4096-sizeof(hl_alloc_block) ? 4096-sizeof(hl_alloc_block) : size;
+		int alloc = size < 4096-(int)sizeof(hl_alloc_block) ? 4096-(int)sizeof(hl_alloc_block) : size;
 		b = (hl_alloc_block *)malloc(sizeof(hl_alloc_block) + alloc);
 		if( b == NULL ) out_of_memory("malloc");
 		b->p = ((unsigned char*)b) + sizeof(hl_alloc_block);
@@ -1372,7 +1372,7 @@ static void gc_dump_block( void *block, int size ) {
 static void gc_dump_block_ptr( void *block, int size ) {
 	fdump_p(block);
 	fdump_i(size);
-	if( size >= sizeof(void*) ) fdump_p(*(void**)block);
+	if( size >= (int)sizeof(void*) ) fdump_p(*(void**)block);
 }
 
 static void gc_dump_page( gc_pheader *p, int private_data ) {
@@ -1396,6 +1396,12 @@ HL_API void hl_gc_dump_memory( const char *filename ) {
 	gc_stop_world(true);
 	gc_mark();
 	fdump = fopen(filename,"wb");
+	if( fdump == NULL ) {
+		gc_stop_world(false);
+		gc_global_lock(false);
+		hl_error("Failed to open file");
+		return;
+	}
 
 	// header
 	fdump_d("HMD1",4);
@@ -1463,7 +1469,7 @@ typedef struct {
 static gc_live_obj live_obj;
 
 static void gc_count_live_block( void *block, int size ) {
-	if( size < sizeof(void*) ) return;
+	if( size < (int)sizeof(void*) ) return;
 	hl_type *t = *(hl_type **)block;
 	if( t != live_obj.t ) return;
 	live_obj.count++;

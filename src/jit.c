@@ -1846,6 +1846,7 @@ static preg *op_binop( jit_ctx *ctx, vreg *dst, vreg *a, vreg *b, hl_op bop ) {
 	case HABSTRACT:
 	case HARRAY:
 	case HI64:
+	case HGUID:
 		switch( ID2(pa->kind, pb->kind) ) {
 		case ID2(RCPU,RCPU):
 		case ID2(RCPU,RSTACK):
@@ -4591,7 +4592,7 @@ void *hl_jit_code( jit_ctx *ctx, hl_module *m, int *codesize, hl_debug_infos **d
 		hl_setup_longjump(code + ctx->longjump);
 #		endif
 		int i;
-		for(i=0;i<sizeof(ctx->static_functions)/sizeof(void*);i++)
+		for(i=0;i<(int)(sizeof(ctx->static_functions)/sizeof(void*));i++)
 			ctx->static_functions[i] = (void*)(code + (int)(int_val)ctx->static_functions[i]);
 	}
 	// patch calls
