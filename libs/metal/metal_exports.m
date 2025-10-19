@@ -240,6 +240,77 @@ HL_PRIM void HL_NAME(dispose_texture)(vdynamic *texture) {
     }
 }
 
+// Sampler State Management
+// filter: 0=Nearest, 1=Linear
+// mipFilter: 0=None, 1=Nearest, 2=Linear
+// wrap: 0=Clamp, 1=Repeat
+HL_PRIM vdynamic* HL_NAME(create_sampler_state)(int minFilter, int magFilter, int mipFilter, int wrapS, int wrapT) {
+    if (ctx == NULL || ctx->device == NULL) return NULL;
+
+    @autoreleasepool {
+        id<MTLDevice> device = (__bridge id<MTLDevice>)ctx->device;
+        
+        MTLSamplerDescriptor *samplerDesc = [[MTLSamplerDescriptor alloc] init];
+        
+        // Min/Mag filter
+        samplerDesc.minFilter = (minFilter == 0) ? MTLSamplerMinMagFilterNearest : MTLSamplerMinMagFilterLinear;
+        samplerDesc.magFilter = (magFilter == 0) ? MTLSamplerMinMagFilterNearest : MTLSamplerMinMagFilterLinear;
+        
+        // Mip filter
+        if (mipFilter == 0) {
+            samplerDesc.mipFilter = MTLSamplerMipFilterNotMipmapped;
+        } else if (mipFilter == 1) {
+            samplerDesc.mipFilter = MTLSamplerMipFilterNearest;
+        } else {
+            samplerDesc.mipFilter = MTLSamplerMipFilterLinear;
+        }
+        
+        // Wrap modes
+        MTLSamplerAddressMode addressModeS = (wrapS == 1) ? MTLSamplerAddressModeRepeat : MTLSamplerAddressModeClampToEdge;
+        MTLSamplerAddressMode addressModeT = (wrapT == 1) ? MTLSamplerAddressModeRepeat : MTLSamplerAddressModeClampToEdge;
+        samplerDesc.sAddressMode = addressModeS;
+        samplerDesc.tAddressMode = addressModeT;
+        
+        id<MTLSamplerState> samplerState = [device newSamplerStateWithDescriptor:samplerDesc];
+        if (samplerState == NULL) {
+            metal_debug_log("ERROR: create_sampler_state() - failed to create sampler");
+            return NULL;
+        }
+        
+        return (vdynamic*)(__bridge_retained void*)samplerState;
+    }
+}
+
+HL_PRIM void HL_NAME(dispose_sampler)(vdynamic *sampler) {
+    if (sampler == NULL) return;
+
+    @autoreleasepool {
+        id<MTLSamplerState> samplerState = (__bridge_transfer id<MTLSamplerState>)sampler;
+        (void)samplerState; // ARC will handle release
+    }
+}
+
+HL_PRIM void HL_NAME(set_fragment_samplers)(vdynamic *encoder, varray *samplers) {
+    if (encoder == NULL || samplers == NULL) return;
+
+    @autoreleasepool {
+        id<MTLRenderCommandEncoder> renderEncoder = (__bridge id<MTLRenderCommandEncoder>)encoder;
+        
+        int count = samplers->size;
+        if (count <= 0) return;
+        
+        // Convert varray to id<MTLSamplerState> array
+        id<MTLSamplerState> samplerArray[count];
+        vdynamic **samplerPtrs = hl_aptr(samplers, vdynamic*);
+        
+        for (int i = 0; i < count; i++) {
+            samplerArray[i] = (__bridge id<MTLSamplerState>)samplerPtrs[i];
+        }
+        
+        [renderEncoder setFragmentSamplerStates:samplerArray withRange:NSMakeRange(0, count)];
+    }
+}
+
 // Shader compilation - Metal specific with MSL (new functions only)
 HL_PRIM vdynamic* HL_NAME(compile_shader)(vstring *source, int shaderType) {
     if (ctx == NULL || ctx->device == NULL || source == NULL) return NULL;
@@ -592,6 +663,10 @@ DEFINE_PRIM(_DYN, create_texture, _I32 _I32 _I32 _I32);
 DEFINE_PRIM(_BOOL, upload_texture_data, _DYN _BYTES _I32 _I32 _I32);
 DEFINE_PRIM(_BOOL, capture_texture_pixels, _DYN _BYTES _I32 _I32 _I32);
 DEFINE_PRIM(_VOID, dispose_texture, _DYN);
+
+DEFINE_PRIM(_DYN, create_sampler_state, _I32 _I32 _I32 _I32 _I32);
+DEFINE_PRIM(_VOID, dispose_sampler, _DYN);
+DEFINE_PRIM(_VOID, set_fragment_samplers, _DYN _ARR);
 
 DEFINE_PRIM(_DYN, compile_shader, _STRING _I32);
 DEFINE_PRIM(_DYN, create_render_pipeline, _DYN _DYN _STRING);
