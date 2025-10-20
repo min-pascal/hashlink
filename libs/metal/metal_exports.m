@@ -498,9 +498,17 @@ HL_PRIM vdynamic* HL_NAME(begin_texture_render_pass)(vdynamic *cmdBuffer, vdynam
 
         MTLRenderPassDescriptor *renderPassDescriptor = [MTLRenderPassDescriptor renderPassDescriptor];
         renderPassDescriptor.colorAttachments[0].texture = metalTexture;
-        renderPassDescriptor.colorAttachments[0].loadAction = MTLLoadActionClear;
+        
+        // If alpha is negative, use Load action to preserve existing content (additive rendering)
+        // Otherwise use Clear action
+        if (a < 0) {
+            renderPassDescriptor.colorAttachments[0].loadAction = MTLLoadActionLoad;
+        } else {
+            renderPassDescriptor.colorAttachments[0].loadAction = MTLLoadActionClear;
+            renderPassDescriptor.colorAttachments[0].clearColor = MTLClearColorMake(r/255.0, g/255.0, b/255.0, a/255.0);
+        }
+        
         renderPassDescriptor.colorAttachments[0].storeAction = MTLStoreActionStore;
-        renderPassDescriptor.colorAttachments[0].clearColor = MTLClearColorMake(r/255.0, g/255.0, b/255.0, a/255.0);
 
         id<MTLRenderCommandEncoder> encoder = [commandBuffer renderCommandEncoderWithDescriptor:renderPassDescriptor];
         if (encoder == NULL) {
