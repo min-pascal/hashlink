@@ -715,6 +715,20 @@ HL_PRIM void HL_NAME(set_cull_mode)(vdynamic *encoder, int cullMode) {
     }
 }
 
+HL_PRIM void HL_NAME(set_triangle_fill_mode)(vdynamic *encoder, bool wireframe) {
+    if (encoder == NULL) return;
+
+    @autoreleasepool {
+        id<MTLRenderCommandEncoder> renderEncoder = (__bridge id<MTLRenderCommandEncoder>)encoder;
+        
+        // Metal triangle fill modes: MTLTriangleFillModeFill (solid) or MTLTriangleFillModeLines (wireframe)
+        MTLTriangleFillMode fillMode = wireframe ? MTLTriangleFillModeLines : MTLTriangleFillModeFill;
+        
+        [renderEncoder setTriangleFillMode:fillMode];
+        metal_debug_log("set_triangle_fill_mode() - Mode: %s", wireframe ? "Wireframe" : "Solid");
+    }
+}
+
 HL_PRIM void HL_NAME(set_vertex_buffer)(vdynamic *encoder, vdynamic *buffer, int offset, int index) {
     if (encoder == NULL || buffer == NULL) return;
 
@@ -860,6 +874,7 @@ DEFINE_PRIM(_DYN, begin_texture_render_pass, _DYN _DYN _I32 _I32 _I32 _I32);
 DEFINE_PRIM(_VOID, set_render_pipeline_state, _DYN _DYN);
 DEFINE_PRIM(_VOID, set_depth_state, _DYN _BOOL _BOOL);
 DEFINE_PRIM(_VOID, set_cull_mode, _DYN _I32);
+DEFINE_PRIM(_VOID, set_triangle_fill_mode, _DYN _BOOL);
 DEFINE_PRIM(_VOID, set_vertex_buffer, _DYN _DYN _I32 _I32);
 DEFINE_PRIM(_VOID, set_fragment_texture, _DYN _DYN _I32);
 DEFINE_PRIM(_VOID, set_fragment_buffer, _DYN _DYN _I32 _I32);
