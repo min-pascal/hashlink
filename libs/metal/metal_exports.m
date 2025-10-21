@@ -153,16 +153,23 @@ HL_PRIM bool HL_NAME(upload_buffer_data)(vdynamic *buffer, vbyte *data, int size
 }
 
 // Texture management - Metal specific (new functions only)
-HL_PRIM vdynamic* HL_NAME(create_texture)(int width, int height, int format, int usage) {
+HL_PRIM vdynamic* HL_NAME(create_texture)(int width, int height, int format, int usage, bool mipmapped, bool isCube) {
     if (ctx == NULL || ctx->device == NULL || width <= 0 || height <= 0) return NULL;
 
     @autoreleasepool {
         id<MTLDevice> device = (__bridge id<MTLDevice>)ctx->device;
 
-        MTLTextureDescriptor *descriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
-                                                                                              width:width
-                                                                                             height:height
-                                                                                          mipmapped:NO];
+        MTLTextureDescriptor *descriptor;
+        if (isCube) {
+            descriptor = [MTLTextureDescriptor textureCubeDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
+                                                                                size:width
+                                                                           mipmapped:mipmapped];
+        } else {
+            descriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
+                                                                                  width:width
+                                                                                 height:height
+                                                                              mipmapped:mipmapped];
+        }
 
         // Map format parameter to Metal pixel format
         switch (format) {
@@ -193,7 +200,7 @@ HL_PRIM vdynamic* HL_NAME(create_texture)(int width, int height, int format, int
     }
 }
 
-HL_PRIM bool HL_NAME(upload_texture_data)(vdynamic *texture, vbyte *data, int width, int height, int level) {
+HL_PRIM bool HL_NAME(upload_texture_data)(vdynamic *texture, vbyte *data, int width, int height, int level, int slice) {
     if (texture == NULL || data == NULL || width <= 0 || height <= 0) return false;
 
     @autoreleasepool {
@@ -204,8 +211,10 @@ HL_PRIM bool HL_NAME(upload_texture_data)(vdynamic *texture, vbyte *data, int wi
 
         [metalTexture replaceRegion:region
                         mipmapLevel:level
+                              slice:slice
                           withBytes:data
-                        bytesPerRow:bytesPerRow];
+                        bytesPerRow:bytesPerRow
+                      bytesPerImage:0];
 
         return true;
     }
@@ -231,6 +240,36 @@ HL_PRIM bool HL_NAME(capture_texture_pixels)(vdynamic *texture, vbyte *data, int
 
         metal_debug_log("capture_texture_pixels() - SUCCESS (width=%d, height=%d, level=%d)", width, height, level);
         return true;
+    }
+}
+
+HL_PRIM void HL_NAME(generate_mipmaps)(vdynamic *texture) {
+    if (texture == NULL || ctx == NULL || ctx->commandQueue == NULL) return;
+
+    @autoreleasepool {
+        id<MTLTexture> metalTexture = (__bridge id<MTLTexture>)texture;
+        id<MTLCommandQueue> commandQueue = (__bridge id<MTLCommandQueue>)ctx->commandQueue;
+        
+        // Create a blit command encoder to generate mipmaps
+        id<MTLCommandBuffer> commandBuffer = [commandQueue commandBuffer];
+        if (commandBuffer == NULL) {
+            metal_debug_log("ERROR: generate_mipmaps() - failed to create command buffer");
+            return;
+        }
+        
+        id<MTLBlitCommandEncoder> blitEncoder = [commandBuffer blitCommandEncoder];
+        if (blitEncoder == NULL) {
+            metal_debug_log("ERROR: generate_mipmaps() - failed to create blit encoder");
+            return;
+        }
+        
+        [blitEncoder generateMipmapsForTexture:metalTexture];
+        [blitEncoder endEncoding];
+        
+        [commandBuffer commit];
+        [commandBuffer waitUntilCompleted];
+        
+        metal_debug_log("generate_mipmaps() - SUCCESS");
     }
 }
 
@@ -855,9 +894,10 @@ DEFINE_PRIM(_VOID, wait_until_completed, _DYN);
 DEFINE_PRIM(_DYN, create_buffer, _I32 _I32);
 DEFINE_PRIM(_BOOL, upload_buffer_data, _DYN _BYTES _I32 _I32);
 
-DEFINE_PRIM(_DYN, create_texture, _I32 _I32 _I32 _I32);
-DEFINE_PRIM(_BOOL, upload_texture_data, _DYN _BYTES _I32 _I32 _I32);
+DEFINE_PRIM(_DYN, create_texture, _I32 _I32 _I32 _I32 _BOOL _BOOL);
+DEFINE_PRIM(_BOOL, upload_texture_data, _DYN _BYTES _I32 _I32 _I32 _I32);
 DEFINE_PRIM(_BOOL, capture_texture_pixels, _DYN _BYTES _I32 _I32 _I32);
+DEFINE_PRIM(_VOID, generate_mipmaps, _DYN);
 DEFINE_PRIM(_VOID, dispose_texture, _DYN);
 
 DEFINE_PRIM(_DYN, create_sampler_state, _I32 _I32 _I32 _I32 _I32);
