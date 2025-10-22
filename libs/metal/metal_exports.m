@@ -878,9 +878,12 @@ HL_PRIM void HL_NAME(set_scissor_rect)(vdynamic *encoder, int x, int y, int widt
     @autoreleasepool {
         id<MTLRenderCommandEncoder> renderEncoder = (__bridge id<MTLRenderCommandEncoder>)encoder;
 
-        MTLScissorRect scissor = {x, y, width, height};
+        // Coordinates must be non-negative
+        if (x < 0) x = 0;
+        if (y < 0) y = 0;
+
+        MTLScissorRect scissor = {(NSUInteger)x, (NSUInteger)y, (NSUInteger)width, (NSUInteger)height};
         [renderEncoder setScissorRect:scissor];
-        metal_debug_log("set_scissor_rect() - SUCCESS (x=%d, y=%d, width=%d, height=%d)", x, y, width, height);
     }
 }
 
