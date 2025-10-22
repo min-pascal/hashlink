@@ -415,9 +415,10 @@ HL_PRIM vdynamic* HL_NAME(create_render_pipeline)(vdynamic *vertexShader, vdynam
         descriptor.colorAttachments[0].destinationRGBBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
         descriptor.colorAttachments[0].destinationAlphaBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
 
-        // CRITICAL: Set depth attachment format for depth testing to work!
-        // Must match the depth texture format (MTLPixelFormatDepth32Float)
-        descriptor.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
+        // CRITICAL: Set depth-stencil attachment formats for depth and stencil testing to work!
+        // Must match the depth-stencil texture format (MTLPixelFormatDepth32Float_Stencil8)
+        descriptor.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float_Stencil8;
+        descriptor.stencilAttachmentPixelFormat = MTLPixelFormatDepth32Float_Stencil8;
 
         // Parse vertexDesc and dynamically build vertex descriptor
         // Format: "position:float3,normal:float3,uv:float2" etc.
@@ -564,16 +565,25 @@ HL_PRIM vdynamic* HL_NAME(begin_render_pass)(vdynamic *cmdBuffer, int r, int g, 
         renderPassDescriptor.colorAttachments[0].storeAction = MTLStoreActionStore;
         renderPassDescriptor.colorAttachments[0].clearColor = MTLClearColorMake(r/255.0, g/255.0, b/255.0, a/255.0);
 
-        // CRITICAL: Attach depth texture for depth testing to work!
+        // CRITICAL: Attach depth-stencil texture for depth and stencil testing to work!
         if (ctx->depthTexture != NULL) {
             id<MTLTexture> depthTexture = (__bridge id<MTLTexture>)ctx->depthTexture;
             renderPassDescriptor.depthAttachment.texture = depthTexture;
             renderPassDescriptor.depthAttachment.loadAction = MTLLoadActionClear;
             renderPassDescriptor.depthAttachment.storeAction = MTLStoreActionDontCare;
             renderPassDescriptor.depthAttachment.clearDepth = 1.0;
-            metal_debug_log("begin_render_pass() - Depth texture attached: %p", depthTexture);
+            
+            // Attach stencil (using the same texture as depth since we use combined depth-stencil format)
+            renderPassDescriptor.stencilAttachment.texture = depthTexture;
+            renderPassDescriptor.stencilAttachment.loadAction = MTLLoadActionClear;
+            renderPassDescriptor.stencilAttachment.storeAction = MTLStoreActionStore;  // MUST Store to preserve stencil between passes!
+            renderPassDescriptor.stencilAttachment.clearStencil = 0;
+            
+            metal_debug_log("begin_render_pass() - Stencil attachment configured (clear=0)");
+            
+            metal_debug_log("begin_render_pass() - Depth-stencil texture attached: %p", depthTexture);
         } else {
-            metal_debug_log("begin_render_pass() - WARNING: No depth texture!");
+            metal_debug_log("begin_render_pass() - WARNING: No depth-stencil texture!");
         }
 
         id<MTLRenderCommandEncoder> encoder = [commandBuffer renderCommandEncoderWithDescriptor:renderPassDescriptor];
@@ -612,12 +622,17 @@ HL_PRIM vdynamic* HL_NAME(resume_render_pass)(vdynamic *cmdBuffer) {
         renderPassDescriptor.colorAttachments[0].loadAction = MTLLoadActionLoad;  // LOAD existing content!
         renderPassDescriptor.colorAttachments[0].storeAction = MTLStoreActionStore;
 
-        // CRITICAL: Attach depth texture for depth testing to work!
+        // CRITICAL: Attach depth-stencil texture for depth and stencil testing to work!
         if (ctx->depthTexture != NULL) {
             id<MTLTexture> depthTexture = (__bridge id<MTLTexture>)ctx->depthTexture;
             renderPassDescriptor.depthAttachment.texture = depthTexture;
             renderPassDescriptor.depthAttachment.loadAction = MTLLoadActionLoad;  // Load existing depth
             renderPassDescriptor.depthAttachment.storeAction = MTLStoreActionStore;
+            
+            // CRITICAL: Also load the stencil attachment to preserve stencil buffer between passes!
+            renderPassDescriptor.stencilAttachment.texture = depthTexture;
+            renderPassDescriptor.stencilAttachment.loadAction = MTLLoadActionLoad;  // Load existing stencil
+            renderPassDescriptor.stencilAttachment.storeAction = MTLStoreActionStore;
         }
 
         id<MTLRenderCommandEncoder> encoder = [commandBuffer renderCommandEncoderWithDescriptor:renderPassDescriptor];
@@ -661,7 +676,7 @@ HL_PRIM vdynamic* HL_NAME(begin_texture_render_pass)(vdynamic *cmdBuffer, vdynam
         
         renderPassDescriptor.colorAttachments[0].storeAction = MTLStoreActionStore;
 
-        // CRITICAL: Attach depth texture for depth testing to work!
+        // CRITICAL: Attach depth-stencil texture for depth and stencil testing to work!
         // Note: For render-to-texture, we might need a separate depth texture in the future
         if (ctx->depthTexture != NULL) {
             id<MTLTexture> depthTexture = (__bridge id<MTLTexture>)ctx->depthTexture;
@@ -673,6 +688,16 @@ HL_PRIM vdynamic* HL_NAME(begin_texture_render_pass)(vdynamic *cmdBuffer, vdynam
                 renderPassDescriptor.depthAttachment.clearDepth = 1.0;
             }
             renderPassDescriptor.depthAttachment.storeAction = MTLStoreActionStore;
+            
+            // CRITICAL: Also attach stencil to preserve stencil buffer
+            renderPassDescriptor.stencilAttachment.texture = depthTexture;
+            if (a < 0) {
+                renderPassDescriptor.stencilAttachment.loadAction = MTLLoadActionLoad;
+            } else {
+                renderPassDescriptor.stencilAttachment.loadAction = MTLLoadActionClear;
+                renderPassDescriptor.stencilAttachment.clearStencil = 0;
+            }
+            renderPassDescriptor.stencilAttachment.storeAction = MTLStoreActionStore;
         }
 
         id<MTLRenderCommandEncoder> encoder = [commandBuffer renderCommandEncoderWithDescriptor:renderPassDescriptor];
@@ -887,6 +912,85 @@ HL_PRIM void HL_NAME(set_scissor_rect)(vdynamic *encoder, int x, int y, int widt
     }
 }
 
+HL_PRIM void HL_NAME(set_stencil_state)(vdynamic *encoder, bool depthTest, bool depthWrite,
+    int frontFunc, int frontSTfail, int frontDPfail, int frontPass,
+    int backFunc, int backSTfail, int backDPfail, int backPass,
+    int reference, int readMask, int writeMask) {
+    
+    if (encoder == NULL || ctx == NULL) return;
+
+    @autoreleasepool {
+        id<MTLRenderCommandEncoder> renderEncoder = (__bridge id<MTLRenderCommandEncoder>)encoder;
+        id<MTLDevice> device = (__bridge id<MTLDevice>)ctx->device;
+        
+        // Create a depth stencil descriptor
+        MTLDepthStencilDescriptor *descriptor = [[MTLDepthStencilDescriptor alloc] init];
+        
+        // Set depth state
+        if (depthTest) {
+            descriptor.depthCompareFunction = MTLCompareFunctionLess;
+            descriptor.depthWriteEnabled = depthWrite ? YES : NO;
+        } else {
+            descriptor.depthCompareFunction = MTLCompareFunctionAlways;
+            descriptor.depthWriteEnabled = NO;
+        }
+        
+        // Map Heaps Compare enum to Metal compare function
+        // Compare enum: Always=0, Never=1, Equal=2, NotEqual=3, Greater=4, GreaterEqual=5, Less=6, LessEqual=7
+        MTLCompareFunction compareFuncs[] = {
+            MTLCompareFunctionAlways,      // 0: Always
+            MTLCompareFunctionNever,       // 1: Never
+            MTLCompareFunctionEqual,       // 2: Equal
+            MTLCompareFunctionNotEqual,    // 3: NotEqual
+            MTLCompareFunctionGreater,     // 4: Greater
+            MTLCompareFunctionGreaterEqual,// 5: GreaterEqual
+            MTLCompareFunctionLess,        // 6: Less
+            MTLCompareFunctionLessEqual    // 7: LessEqual
+        };
+        
+        // Map Heaps StencilOp enum to Metal stencil operation
+        // StencilOp enum: Keep=0, Zero=1, Replace=2, Increment=3, IncrementWrap=4, Decrement=5, DecrementWrap=6, Invert=7
+        MTLStencilOperation stencilOps[] = {
+            MTLStencilOperationKeep,           // 0: Keep
+            MTLStencilOperationZero,           // 1: Zero
+            MTLStencilOperationReplace,        // 2: Replace
+            MTLStencilOperationIncrementClamp, // 3: Increment
+            MTLStencilOperationIncrementWrap,  // 4: IncrementWrap
+            MTLStencilOperationDecrementClamp, // 5: Decrement
+            MTLStencilOperationDecrementWrap,  // 6: DecrementWrap
+            MTLStencilOperationInvert          // 7: Invert
+        };
+        
+        // Front face stencil
+        MTLStencilDescriptor *frontStencil = [[MTLStencilDescriptor alloc] init];
+        frontStencil.stencilCompareFunction = compareFuncs[frontFunc];
+        frontStencil.stencilFailureOperation = stencilOps[frontSTfail];
+        frontStencil.depthFailureOperation = stencilOps[frontDPfail];
+        frontStencil.depthStencilPassOperation = stencilOps[frontPass];
+        frontStencil.readMask = (uint32_t)readMask;
+        frontStencil.writeMask = (uint32_t)writeMask;
+        descriptor.frontFaceStencil = frontStencil;
+        
+        // Back face stencil
+        MTLStencilDescriptor *backStencil = [[MTLStencilDescriptor alloc] init];
+        backStencil.stencilCompareFunction = compareFuncs[backFunc];
+        backStencil.stencilFailureOperation = stencilOps[backSTfail];
+        backStencil.depthFailureOperation = stencilOps[backDPfail];
+        backStencil.depthStencilPassOperation = stencilOps[backPass];
+        backStencil.readMask = (uint32_t)readMask;
+        backStencil.writeMask = (uint32_t)writeMask;
+        descriptor.backFaceStencil = backStencil;
+        
+        // Create the depth stencil state
+        id<MTLDepthStencilState> depthStencilState = [device newDepthStencilStateWithDescriptor:descriptor];
+        
+        if (depthStencilState) {
+            [renderEncoder setDepthStencilState:depthStencilState];
+            [renderEncoder setStencilReferenceValue:(uint32_t)reference];
+        }
+    }
+}
+
 // DEFINE_PRIM macros to export ALL functions to Hashlink
 DEFINE_PRIM(_DYN, get_device, _NO_ARG);
 DEFINE_PRIM(_DYN, create_command_buffer, _NO_ARG);
@@ -927,3 +1031,5 @@ DEFINE_PRIM(_VOID, end_encoding, _DYN);
 
 DEFINE_PRIM(_VOID, set_viewport, _DYN _F64 _F64 _F64 _F64);
 DEFINE_PRIM(_VOID, set_scissor_rect, _DYN _I32 _I32 _I32 _I32);
+DEFINE_PRIM(_VOID, set_stencil_state, _DYN _BOOL _BOOL _I32 _I32 _I32 _I32 _I32 _I32 _I32 _I32 _I32 _I32 _I32);
+
