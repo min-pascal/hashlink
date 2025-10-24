@@ -9,7 +9,6 @@ INSTALL_INCLUDE_DIR ?= $(PREFIX)/include
 
 LIBS=fmt sdl ssl openal ui uv mysql sqlite heaps metal
 ARCH ?= $(shell uname -m)
-BUILD_OUTPUT_DIR ?= build-x86_64
 
 CFLAGS = -Wall -O3 -I src -std=c11 -D LIBHL_EXPORTS
 LFLAGS = -L. -lhl
@@ -184,6 +183,9 @@ LFLAGS += -arch $(ARCH)
 LFLAGS += -rpath @executable_path -rpath $(INSTALL_LIB_DIR)
 LIBFLAGS += -rpath @executable_path -rpath $(INSTALL_LIB_DIR)
 LHL_LINK_FLAGS += -install_name @rpath/libhl.dylib
+
+BUILD_OUTPUT_DIR ?= build-$(ARCH)
+
 else
 
 # Linux
@@ -260,15 +262,15 @@ libs/fmt/%.o: libs/fmt/%.c
 
 fmt: ${FMT} libhl
 	mkdir -p $(BUILD_OUTPUT_DIR)
-	${CC} ${CFLAGS} -shared -o $(BUILD_OUTPUT_DIR)/fmt.hdll ${FMT} ${LIBFLAGS} -L$(BUILD_OUTPUT_DIR) -lhl -lpng $(LIBTURBOJPEG) -lz -lvorbisfile
+	${CC} ${CFLAGS} -shared -o $(BUILD_OUTPUT_DIR)/fmt.hdll ${FMT} -L$(BUILD_OUTPUT_DIR) -lhl ${LIBFLAGS} -lpng $(LIBTURBOJPEG) -lz -lvorbisfile
 
 sdl: ${SDL} libhl
 	mkdir -p $(BUILD_OUTPUT_DIR)
-	${CC} ${CFLAGS} -shared -o $(BUILD_OUTPUT_DIR)/sdl.hdll ${SDL} ${LIBFLAGS} -L$(BUILD_OUTPUT_DIR) -lhl -lSDL2 $(LIBOPENGL)
+	${CC} ${CFLAGS} -shared -o $(BUILD_OUTPUT_DIR)/sdl.hdll ${SDL} -L$(BUILD_OUTPUT_DIR) -lhl ${LIBFLAGS} -lSDL2 $(LIBOPENGL)
 
 openal: ${OPENAL} libhl
 	mkdir -p $(BUILD_OUTPUT_DIR)
-	${CC} ${CFLAGS} -shared -o $(BUILD_OUTPUT_DIR)/openal.hdll ${OPENAL} ${LIBFLAGS} -L$(BUILD_OUTPUT_DIR) -lhl $(LIBOPENAL)
+	${CC} ${CFLAGS} -shared -o $(BUILD_OUTPUT_DIR)/openal.hdll ${OPENAL} -L$(BUILD_OUTPUT_DIR) -lhl ${LIBFLAGS} $(LIBOPENAL)
 
 ./include/mbedtls/%.o: ./include/mbedtls/%.c
 	${CC} ${CFLAGS} -o $@ -c $< ${SSL_CFLAGS}
@@ -280,23 +282,23 @@ libs/ssl/ssl.o: libs/ssl/ssl.c
 
 ssl: ${SSL} libhl
 	mkdir -p $(BUILD_OUTPUT_DIR)
-	${CC} ${CFLAGS} ${SSL_CFLAGS} -shared -o $(BUILD_OUTPUT_DIR)/ssl.hdll ${SSL} ${LIBFLAGS} -L$(BUILD_OUTPUT_DIR) -lhl ${SSL_LDLIBS} $(LIBSSL)
+	${CC} ${CFLAGS} ${SSL_CFLAGS} -shared -o $(BUILD_OUTPUT_DIR)/ssl.hdll ${SSL} -L$(BUILD_OUTPUT_DIR) -lhl ${LIBFLAGS} ${SSL_LDLIBS} $(LIBSSL)
 
 ui: ${UI} libhl
 	mkdir -p $(BUILD_OUTPUT_DIR)
-	${CC} ${CFLAGS} -shared -o $(BUILD_OUTPUT_DIR)/ui.hdll ${UI} ${LIBFLAGS} -L$(BUILD_OUTPUT_DIR) -lhl
+	${CC} ${CFLAGS} -shared -o $(BUILD_OUTPUT_DIR)/ui.hdll ${UI} -L$(BUILD_OUTPUT_DIR) -lhl ${LIBFLAGS}
 
 uv: ${UV} libhl
 	mkdir -p $(BUILD_OUTPUT_DIR)
-	${CC} ${CFLAGS} -shared -o $(BUILD_OUTPUT_DIR)/uv.hdll ${UV} ${LIBFLAGS} -L$(BUILD_OUTPUT_DIR) -lhl -luv
+	${CC} ${CFLAGS} -shared -o $(BUILD_OUTPUT_DIR)/uv.hdll ${UV} -L$(BUILD_OUTPUT_DIR) -lhl ${LIBFLAGS} -luv
 
 mysql: ${MYSQL} libhl
 	mkdir -p $(BUILD_OUTPUT_DIR)
-	${CC} ${CFLAGS} -shared -o $(BUILD_OUTPUT_DIR)/mysql.hdll ${MYSQL} ${LIBFLAGS} -L$(BUILD_OUTPUT_DIR) -lhl
+	${CC} ${CFLAGS} -shared -o $(BUILD_OUTPUT_DIR)/mysql.hdll ${MYSQL} -L$(BUILD_OUTPUT_DIR) -lhl ${LIBFLAGS}
 
 sqlite: ${SQLITE} libhl
 	mkdir -p $(BUILD_OUTPUT_DIR)
-	${CC} ${CFLAGS} -shared -o $(BUILD_OUTPUT_DIR)/sqlite.hdll ${SQLITE} ${LIBFLAGS} -L$(BUILD_OUTPUT_DIR) -lhl -lsqlite3
+	${CC} ${CFLAGS} -shared -o $(BUILD_OUTPUT_DIR)/sqlite.hdll ${SQLITE} -L$(BUILD_OUTPUT_DIR) -lhl ${LIBFLAGS} -lsqlite3
 
 CXXFLAGS:=$(filter-out -std=c11,$(CFLAGS)) -std=c++11
 
@@ -314,7 +316,7 @@ CXXFLAGS:=$(filter-out -std=c11,$(CFLAGS)) -std=c++11
 
 heaps: ${HEAPS} libhl
 	mkdir -p $(BUILD_OUTPUT_DIR)
-	${CXX} ${CFLAGS} ${HEAPS_CFLAGS} -shared -o $(BUILD_OUTPUT_DIR)/heaps.hdll ${HEAPS} ${LIBFLAGS} -L$(BUILD_OUTPUT_DIR) -lhl
+	${CXX} ${CFLAGS} ${HEAPS_CFLAGS} -shared -o $(BUILD_OUTPUT_DIR)/heaps.hdll ${HEAPS} -L$(BUILD_OUTPUT_DIR) -lhl ${LIBFLAGS}
 
 metal: libhl
 	(cd libs/metal && ${MAKE} BUILD_OUTPUT_DIR=$(shell pwd)/$(BUILD_OUTPUT_DIR))
@@ -395,6 +397,6 @@ clean_o:
 	rm -f ${STD} ${BOOT} ${RUNTIME} ${PCRE} ${HL} ${FMT} ${SDL} ${SSL} ${OPENAL} ${UI} ${UV} ${MYSQL} ${SQLITE} ${HEAPS} ${HL_DEBUG}
 
 clean: clean_o
-	rm -rf $(BUILD_OUTPUT_DIR)
+	rm -rf build-x86_64
 
 .PHONY: libhl hl hlc fmt sdl libs release
