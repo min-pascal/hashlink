@@ -669,19 +669,54 @@ HL_PRIM vdynamic* HL_NAME(begin_texture_render_pass)(vdynamic *cmdBuffer, vdynam
         // Update command buffer reference
         ctx->currentCommandBuffer = (__bridge void*)commandBuffer;
 
+        // Check if this is a depth texture (for shadow maps)
+        MTLPixelFormat pixelFormat = [metalTexture pixelFormat];
+        BOOL isDepthTexture = (pixelFormat == MTLPixelFormatDepth16Unorm ||
+                               pixelFormat == MTLPixelFormatDepth32Float ||
+                               pixelFormat == MTLPixelFormatDepth32Float_Stencil8 ||
+                               pixelFormat == MTLPixelFormatDepth24Unorm_Stencil8);
+
         MTLRenderPassDescriptor *renderPassDescriptor = [MTLRenderPassDescriptor renderPassDescriptor];
-        renderPassDescriptor.colorAttachments[0].texture = metalTexture;
         
-        // If alpha is negative, use Load action to preserve existing content (additive rendering)
-        // Otherwise use Clear action
-        if (a < 0) {
-            renderPassDescriptor.colorAttachments[0].loadAction = MTLLoadActionLoad;
+        if (isDepthTexture) {
+            // Depth-only render pass for shadow maps (NO color attachment!)
+            metal_debug_log("begin_texture_render_pass() - Creating DEPTH-ONLY pass for shadow map");
+            
+            renderPassDescriptor.depthAttachment.texture = metalTexture;
+            if (a < 0) {
+                renderPassDescriptor.depthAttachment.loadAction = MTLLoadActionLoad;
+            } else {
+                renderPassDescriptor.depthAttachment.loadAction = MTLLoadActionClear;
+                renderPassDescriptor.depthAttachment.clearDepth = 1.0;
+            }
+            renderPassDescriptor.depthAttachment.storeAction = MTLStoreActionStore;
+            
+            // Handle stencil component if present
+            if (pixelFormat == MTLPixelFormatDepth32Float_Stencil8 ||
+                pixelFormat == MTLPixelFormatDepth24Unorm_Stencil8) {
+                renderPassDescriptor.stencilAttachment.texture = metalTexture;
+                if (a < 0) {
+                    renderPassDescriptor.stencilAttachment.loadAction = MTLLoadActionLoad;
+                } else {
+                    renderPassDescriptor.stencilAttachment.loadAction = MTLLoadActionClear;
+                    renderPassDescriptor.stencilAttachment.clearStencil = 0;
+                }
+                renderPassDescriptor.stencilAttachment.storeAction = MTLStoreActionStore;
+            }
         } else {
-            renderPassDescriptor.colorAttachments[0].loadAction = MTLLoadActionClear;
-            renderPassDescriptor.colorAttachments[0].clearColor = MTLClearColorMake(r/255.0, g/255.0, b/255.0, a/255.0);
-        }
-        
-        renderPassDescriptor.colorAttachments[0].storeAction = MTLStoreActionStore;
+            // Color render pass
+            renderPassDescriptor.colorAttachments[0].texture = metalTexture;
+            
+            // If alpha is negative, use Load action to preserve existing content (additive rendering)
+            // Otherwise use Clear action
+            if (a < 0) {
+                renderPassDescriptor.colorAttachments[0].loadAction = MTLLoadActionLoad;
+            } else {
+                renderPassDescriptor.colorAttachments[0].loadAction = MTLLoadActionClear;
+                renderPassDescriptor.colorAttachments[0].clearColor = MTLClearColorMake(r/255.0, g/255.0, b/255.0, a/255.0);
+            }
+            
+            renderPassDescriptor.colorAttachments[0].storeAction = MTLStoreActionStore;
 
         // CRITICAL: Attach depth-stencil texture for depth and stencil testing to work!
         // Note: For render-to-texture, we might need a separate depth texture in the future
