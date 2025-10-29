@@ -998,6 +998,44 @@ HL_PRIM void HL_NAME(set_stencil_state)(vdynamic *encoder, bool depthTest, bool 
     }
 }
 
+HL_PRIM vdynamic* HL_NAME(begin_depth_render_pass)(vdynamic *cmdBuffer, vdynamic *depthTexture, double clearDepth) {
+    if (ctx == NULL || cmdBuffer == NULL || depthTexture == NULL) {
+        metal_debug_log("ERROR: begin_depth_render_pass() - invalid parameters");
+        return NULL;
+    }
+
+    @autoreleasepool {
+        id<MTLCommandBuffer> commandBuffer = (__bridge id<MTLCommandBuffer>)cmdBuffer;
+        id<MTLTexture> metalDepthTexture = (__bridge id<MTLTexture>)depthTexture;
+        
+        // Update command buffer reference
+        ctx->currentCommandBuffer = (__bridge void*)commandBuffer;
+
+        // Create render pass descriptor with ONLY depth attachment (no color)
+        MTLRenderPassDescriptor *renderPassDescriptor = [MTLRenderPassDescriptor new];
+        
+        // Attach depth texture
+        renderPassDescriptor.depthAttachment.texture = metalDepthTexture;
+        renderPassDescriptor.depthAttachment.loadAction = MTLLoadActionClear;
+        renderPassDescriptor.depthAttachment.storeAction = MTLStoreActionStore;
+        renderPassDescriptor.depthAttachment.clearDepth = clearDepth;
+        
+        // NO color attachments for depth-only rendering (shadow pass)
+        
+        id<MTLRenderCommandEncoder> encoder = [commandBuffer renderCommandEncoderWithDescriptor:renderPassDescriptor];
+        if (encoder == NULL) {
+            metal_debug_log("ERROR: begin_depth_render_pass() - failed to create encoder!");
+            return NULL;
+        }
+
+        // Set winding order to counter-clockwise (Heaps/OpenGL convention)
+        [encoder setFrontFacingWinding:MTLWindingClockwise];
+
+        metal_debug_log("begin_depth_render_pass() - SUCCESS");
+        return (vdynamic*)(__bridge_retained void*)encoder;
+    }
+}
+
 // DEFINE_PRIM macros to export ALL functions to Hashlink
 DEFINE_PRIM(_DYN, get_device, _NO_ARG);
 DEFINE_PRIM(_DYN, create_command_buffer, _NO_ARG);
@@ -1025,6 +1063,7 @@ DEFINE_PRIM(_VOID, dispose_pipeline, _DYN);
 DEFINE_PRIM(_DYN, begin_render_pass, _DYN _I32 _I32 _I32 _I32);
 DEFINE_PRIM(_DYN, resume_render_pass, _DYN);
 DEFINE_PRIM(_DYN, begin_texture_render_pass, _DYN _DYN _I32 _I32 _I32 _I32);
+DEFINE_PRIM(_DYN, begin_depth_render_pass, _DYN _DYN _F64);
 DEFINE_PRIM(_VOID, set_render_pipeline_state, _DYN _DYN);
 DEFINE_PRIM(_VOID, set_depth_state, _DYN _BOOL _BOOL);
 DEFINE_PRIM(_VOID, set_cull_mode, _DYN _I32);
