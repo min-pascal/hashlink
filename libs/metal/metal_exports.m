@@ -180,6 +180,13 @@ HL_PRIM vdynamic* HL_NAME(create_texture)(int width, int height, int format, int
             case 4: descriptor.pixelFormat = MTLPixelFormatR8Unorm; break;
             case 5: descriptor.pixelFormat = MTLPixelFormatRGBA16Float; break;
             case 6: descriptor.pixelFormat = MTLPixelFormatRGBA32Float; break;
+            case 7: descriptor.pixelFormat = MTLPixelFormatDepth32Float; break;  // Depth16/Depth32
+            case 8: descriptor.pixelFormat = MTLPixelFormatDepth32Float; break;  // Depth24 -> Depth32
+            case 9: descriptor.pixelFormat = MTLPixelFormatDepth32Float_Stencil8; break;  // Depth24Stencil8
+            case 10: descriptor.pixelFormat = MTLPixelFormatR16Float; break;
+            case 11: descriptor.pixelFormat = MTLPixelFormatR32Float; break;
+            case 12: descriptor.pixelFormat = MTLPixelFormatRG16Float; break;
+            case 13: descriptor.pixelFormat = MTLPixelFormatRG32Float; break;
             default: descriptor.pixelFormat = MTLPixelFormatRGBA8Unorm; break;
         }
 
