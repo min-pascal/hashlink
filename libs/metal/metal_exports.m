@@ -718,28 +718,29 @@ HL_PRIM vdynamic* HL_NAME(begin_texture_render_pass)(vdynamic *cmdBuffer, vdynam
             
             renderPassDescriptor.colorAttachments[0].storeAction = MTLStoreActionStore;
 
-        // CRITICAL: Attach depth-stencil texture for depth and stencil testing to work!
-        // Note: For render-to-texture, we might need a separate depth texture in the future
-        if (ctx->depthTexture != NULL) {
-            id<MTLTexture> depthTexture = (__bridge id<MTLTexture>)ctx->depthTexture;
-            renderPassDescriptor.depthAttachment.texture = depthTexture;
-            if (a < 0) {
-                renderPassDescriptor.depthAttachment.loadAction = MTLLoadActionLoad;
-            } else {
-                renderPassDescriptor.depthAttachment.loadAction = MTLLoadActionClear;
-                renderPassDescriptor.depthAttachment.clearDepth = 1.0;
+            // CRITICAL: Attach depth-stencil texture for depth and stencil testing to work!
+            // Note: For render-to-texture, we might need a separate depth texture in the future
+            if (ctx->depthTexture != NULL) {
+                id<MTLTexture> depthTexture = (__bridge id<MTLTexture>)ctx->depthTexture;
+                renderPassDescriptor.depthAttachment.texture = depthTexture;
+                if (a < 0) {
+                    renderPassDescriptor.depthAttachment.loadAction = MTLLoadActionLoad;
+                } else {
+                    renderPassDescriptor.depthAttachment.loadAction = MTLLoadActionClear;
+                    renderPassDescriptor.depthAttachment.clearDepth = 1.0;
+                }
+                renderPassDescriptor.depthAttachment.storeAction = MTLStoreActionStore;
+                
+                // CRITICAL: Also attach stencil to preserve stencil buffer
+                renderPassDescriptor.stencilAttachment.texture = depthTexture;
+                if (a < 0) {
+                    renderPassDescriptor.stencilAttachment.loadAction = MTLLoadActionLoad;
+                } else {
+                    renderPassDescriptor.stencilAttachment.loadAction = MTLLoadActionClear;
+                    renderPassDescriptor.stencilAttachment.clearStencil = 0;
+                }
+                renderPassDescriptor.stencilAttachment.storeAction = MTLStoreActionStore;
             }
-            renderPassDescriptor.depthAttachment.storeAction = MTLStoreActionStore;
-            
-            // CRITICAL: Also attach stencil to preserve stencil buffer
-            renderPassDescriptor.stencilAttachment.texture = depthTexture;
-            if (a < 0) {
-                renderPassDescriptor.stencilAttachment.loadAction = MTLLoadActionLoad;
-            } else {
-                renderPassDescriptor.stencilAttachment.loadAction = MTLLoadActionClear;
-                renderPassDescriptor.stencilAttachment.clearStencil = 0;
-            }
-            renderPassDescriptor.stencilAttachment.storeAction = MTLStoreActionStore;
         }
 
         id<MTLRenderCommandEncoder> encoder = [commandBuffer renderCommandEncoderWithDescriptor:renderPassDescriptor];
