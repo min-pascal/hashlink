@@ -1098,7 +1098,7 @@ DEFINE_PRIM(_VOID, dispose_pipeline, _DYN);
 
 DEFINE_PRIM(_DYN, begin_render_pass, _DYN _I32 _I32 _I32 _I32);
 DEFINE_PRIM(_DYN, resume_render_pass, _DYN);
-DEFINE_PRIM(_DYN, begin_texture_render_pass, _DYN _DYN _I32 _I32 _I32 _I32);
+DEFINE_PRIM(_DYN, begin_texture_render_pass, _DYN _DYN _I32 _I32 _I32 _I32 _DYN);
 DEFINE_PRIM(_DYN, begin_depth_render_pass, _DYN _DYN _F64);
 DEFINE_PRIM(_VOID, set_render_pipeline_state, _DYN _DYN);
 DEFINE_PRIM(_VOID, set_depth_state, _DYN _BOOL _BOOL);
