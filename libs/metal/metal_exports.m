@@ -180,14 +180,24 @@ HL_PRIM vdynamic* HL_NAME(create_texture)(int width, int height, int format, int
             case 4: descriptor.pixelFormat = MTLPixelFormatR8Unorm; break;
             case 5: descriptor.pixelFormat = MTLPixelFormatRGBA16Float; break;
             case 6: descriptor.pixelFormat = MTLPixelFormatRGBA32Float; break;
-            case 7: descriptor.pixelFormat = MTLPixelFormatDepth16Unorm; break;  // Depth16
-            case 8: descriptor.pixelFormat = MTLPixelFormatDepth32Float; break;  // Depth24
-            case 9: descriptor.pixelFormat = MTLPixelFormatDepth32Float_Stencil8; break;  // Depth24Stencil8
+            case 7: descriptor.pixelFormat = MTLPixelFormatDepth16Unorm; break;  // Depth16 (legacy)
+            case 8: descriptor.pixelFormat = MTLPixelFormatDepth32Float; break;  // Depth24 -> Depth32Float (Apple Silicon doesn't support Depth24)
+            case 9: descriptor.pixelFormat = MTLPixelFormatDepth32Float; break;  // Depth24Stencil8 -> Depth32Float (Apple Silicon doesn't support Depth24)
             case 10: descriptor.pixelFormat = MTLPixelFormatDepth32Float; break;  // Depth32 (NEW: depth2d<float>)
             case 11: descriptor.pixelFormat = MTLPixelFormatR16Float; break;
             case 12: descriptor.pixelFormat = MTLPixelFormatR32Float; break;
             case 13: descriptor.pixelFormat = MTLPixelFormatRG16Float; break;
             case 14: descriptor.pixelFormat = MTLPixelFormatRG32Float; break;
+            case 15: descriptor.pixelFormat = MTLPixelFormatRGBA16Float; break; // RGB16F -> RGBA16F
+            case 16: descriptor.pixelFormat = MTLPixelFormatRGBA32Float; break; // RGB32F -> RGBA32F
+            case 17: descriptor.pixelFormat = MTLPixelFormatRGBA8Unorm_sRGB; break; // SRGB -> RGBA8Unorm_sRGB
+            case 18: descriptor.pixelFormat = MTLPixelFormatRGBA8Unorm_sRGB; break; // SRGB_ALPHA
+            case 19: descriptor.pixelFormat = MTLPixelFormatRGB10A2Unorm; break;
+            case 20: descriptor.pixelFormat = MTLPixelFormatRG11B10Float; break;
+            case 21: descriptor.pixelFormat = MTLPixelFormatR16Unorm; break;
+            case 22: descriptor.pixelFormat = MTLPixelFormatRG16Unorm; break;
+            case 23: descriptor.pixelFormat = MTLPixelFormatRGBA16Unorm; break; // RGB16U -> RGBA16U
+            case 24: descriptor.pixelFormat = MTLPixelFormatRGBA16Unorm; break;
             default: descriptor.pixelFormat = MTLPixelFormatRGBA8Unorm; break;
         }
 
