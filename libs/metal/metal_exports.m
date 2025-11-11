@@ -246,9 +246,52 @@ HL_PRIM bool HL_NAME(capture_texture_pixels)(vdynamic *texture, vbyte *data, int
 
     @autoreleasepool {
         id<MTLTexture> metalTexture = (__bridge id<MTLTexture>)texture;
+        MTLPixelFormat pixelFormat = [metalTexture pixelFormat];
 
         MTLRegion region = MTLRegionMake2D(0, 0, width, height);
-        NSUInteger bytesPerRow = width * 4; // Assuming RGBA8
+        
+        // Calculate bytes per row based on actual pixel format
+        NSUInteger bytesPerPixel;
+        switch (pixelFormat) {
+            case MTLPixelFormatR8Unorm:
+                bytesPerPixel = 1;
+                break;
+            case MTLPixelFormatRG8Unorm:
+            case MTLPixelFormatR16Float:
+            case MTLPixelFormatR16Unorm:
+            case MTLPixelFormatDepth16Unorm:
+                bytesPerPixel = 2;
+                break;
+            case MTLPixelFormatRGBA8Unorm:
+            case MTLPixelFormatBGRA8Unorm:
+            case MTLPixelFormatRGBA8Unorm_sRGB:
+            case MTLPixelFormatRGB10A2Unorm:
+            case MTLPixelFormatRG11B10Float:
+            case MTLPixelFormatRG16Float:
+            case MTLPixelFormatRG16Unorm:
+            case MTLPixelFormatR32Float:
+            case MTLPixelFormatDepth24Unorm_Stencil8:
+                bytesPerPixel = 4;
+                break;
+            case MTLPixelFormatRGBA16Float:
+            case MTLPixelFormatRGBA16Unorm:
+            case MTLPixelFormatRG32Float:
+                bytesPerPixel = 8;
+                break;
+            case MTLPixelFormatRGBA32Float:
+                bytesPerPixel = 16;
+                break;
+            case MTLPixelFormatDepth32Float:
+            case MTLPixelFormatDepth32Float_Stencil8:
+                // Depth textures can't be directly read - this will fail
+                metal_debug_log("ERROR: capture_texture_pixels() - cannot read depth texture directly");
+                return false;
+            default:
+                metal_debug_log("ERROR: capture_texture_pixels() - unsupported pixel format %lu", (unsigned long)pixelFormat);
+                return false;
+        }
+        
+        NSUInteger bytesPerRow = width * bytesPerPixel;
 
         // Read pixels from texture to buffer
         [metalTexture getBytes:data
