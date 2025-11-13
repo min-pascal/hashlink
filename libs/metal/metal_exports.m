@@ -1218,7 +1218,7 @@ DEFINE_PRIM(_VOID, dispose_sampler, _DYN);
 DEFINE_PRIM(_VOID, set_fragment_samplers, _DYN _ARR);
 
 DEFINE_PRIM(_DYN, compile_shader, _STRING _I32);
-DEFINE_PRIM(_DYN, create_render_pipeline, _DYN _DYN _STRING);
+DEFINE_PRIM(_DYN, create_render_pipeline, _DYN _DYN _STRING _I32 _I32 _I32 _I32);
 DEFINE_PRIM(_VOID, dispose_pipeline, _DYN);
 
 DEFINE_PRIM(_DYN, begin_render_pass, _DYN _I32 _I32 _I32 _I32);
