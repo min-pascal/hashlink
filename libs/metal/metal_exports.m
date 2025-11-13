@@ -446,7 +446,26 @@ HL_PRIM vdynamic* HL_NAME(compile_shader)(vstring *source, int shaderType) {
     }
 }
 
-HL_PRIM vdynamic* HL_NAME(create_render_pipeline)(vdynamic *vertexShader, vdynamic *fragmentShader, vstring *vertexDesc) {
+// Map Heaps Blend enum to MTLBlendFactor
+// MUST match order in h3d/mat/Data.hx Blend enum:
+// One=0, Zero=1, SrcAlpha=2, SrcColor=3, DstAlpha=4, DstColor=5,
+// OneMinusSrcAlpha=6, OneMinusSrcColor=7, OneMinusDstAlpha=8, OneMinusDstColor=9,
+// SrcAlphaSaturate=10
+static const MTLBlendFactor BLEND_FACTORS[] = {
+    MTLBlendFactorOne,                      // One = 0
+    MTLBlendFactorZero,                     // Zero = 1
+    MTLBlendFactorSourceAlpha,              // SrcAlpha = 2
+    MTLBlendFactorSourceColor,              // SrcColor = 3
+    MTLBlendFactorDestinationAlpha,         // DstAlpha = 4
+    MTLBlendFactorDestinationColor,         // DstColor = 5
+    MTLBlendFactorOneMinusSourceAlpha,      // OneMinusSrcAlpha = 6
+    MTLBlendFactorOneMinusSourceColor,      // OneMinusSrcColor = 7
+    MTLBlendFactorOneMinusDestinationAlpha, // OneMinusDstAlpha = 8
+    MTLBlendFactorOneMinusDestinationColor, // OneMinusDstColor = 9
+    MTLBlendFactorSourceAlphaSaturated,     // SrcAlphaSaturate = 10
+};
+
+HL_PRIM vdynamic* HL_NAME(create_render_pipeline)(vdynamic *vertexShader, vdynamic *fragmentShader, vstring *vertexDesc, int blendSrc, int blendDst, int blendAlphaSrc, int blendAlphaDst) {
     if (ctx == NULL || ctx->device == NULL || vertexShader == NULL || fragmentShader == NULL) return NULL;
 
     @autoreleasepool {
@@ -466,20 +485,66 @@ HL_PRIM vdynamic* HL_NAME(create_render_pipeline)(vdynamic *vertexShader, vdynam
         descriptor.vertexFunction = vertexFunction;
         descriptor.fragmentFunction = fragmentFunction;
 
-        // Set default color attachment
-        descriptor.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
-        descriptor.colorAttachments[0].blendingEnabled = YES;
-        descriptor.colorAttachments[0].rgbBlendOperation = MTLBlendOperationAdd;
-        descriptor.colorAttachments[0].alphaBlendOperation = MTLBlendOperationAdd;
-        descriptor.colorAttachments[0].sourceRGBBlendFactor = MTLBlendFactorSourceAlpha;
-        descriptor.colorAttachments[0].sourceAlphaBlendFactor = MTLBlendFactorSourceAlpha;
-        descriptor.colorAttachments[0].destinationRGBBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
-        descriptor.colorAttachments[0].destinationAlphaBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
-
-        // CRITICAL: Set depth-stencil attachment formats for depth and stencil testing to work!
-        // Must match the depth-stencil texture format (MTLPixelFormatDepth32Float_Stencil8)
-        descriptor.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float_Stencil8;
-        descriptor.stencilAttachmentPixelFormat = MTLPixelFormatDepth32Float_Stencil8;
+        // CRITICAL FIX: Use current render target's pixel format instead of hardcoded BGRA8Unorm
+        // Use the pixel format stored when we began the render pass
+        MTLPixelFormat targetPixelFormat = (MTLPixelFormat)ctx->currentTargetPixelFormat;
+        
+        // If no format was set (shouldn't happen), default to BGRA8Unorm
+        if (targetPixelFormat == 0) {
+            targetPixelFormat = MTLPixelFormatBGRA8Unorm;
+            metal_debug_log("WARNING: create_render_pipeline() - currentTargetPixelFormat not set, using BGRA8Unorm");
+        } else {
+            metal_debug_log("create_render_pipeline() - Using pixel format: %d", (int)targetPixelFormat);
+        }
+        
+        // Check if this is a depth-only format (for shadow maps)
+        BOOL isDepthFormat = (targetPixelFormat == MTLPixelFormatDepth16Unorm ||
+                              targetPixelFormat == MTLPixelFormatDepth32Float ||
+                              targetPixelFormat == MTLPixelFormatDepth32Float_Stencil8 ||
+                              targetPixelFormat == MTLPixelFormatDepth24Unorm_Stencil8);
+        
+        if (isDepthFormat) {
+            // Depth-only rendering (e.g., shadow maps) - NO color attachment
+            metal_debug_log("create_render_pipeline() - Depth-only pipeline (no color attachment)");
+            descriptor.colorAttachments[0].pixelFormat = MTLPixelFormatInvalid;
+            
+            // Set depth attachment format
+            descriptor.depthAttachmentPixelFormat = targetPixelFormat;
+            
+            // Set stencil format if applicable
+            if (targetPixelFormat == MTLPixelFormatDepth32Float_Stencil8 ||
+                targetPixelFormat == MTLPixelFormatDepth24Unorm_Stencil8) {
+                descriptor.stencilAttachmentPixelFormat = targetPixelFormat;
+            }
+        } else {
+            // Color rendering - set up color attachment
+            descriptor.colorAttachments[0].pixelFormat = targetPixelFormat;
+            
+            // Configure blend state from parameters
+            // Disable blending only for (One, Zero) which is opaque rendering
+            BOOL blendingEnabled = !(blendSrc == 0 && blendDst == 1);
+            descriptor.colorAttachments[0].blendingEnabled = blendingEnabled;
+            descriptor.colorAttachments[0].rgbBlendOperation = MTLBlendOperationAdd;
+            descriptor.colorAttachments[0].alphaBlendOperation = MTLBlendOperationAdd;
+            descriptor.colorAttachments[0].sourceRGBBlendFactor = BLEND_FACTORS[blendSrc];
+            descriptor.colorAttachments[0].sourceAlphaBlendFactor = BLEND_FACTORS[blendAlphaSrc];
+            descriptor.colorAttachments[0].destinationRGBBlendFactor = BLEND_FACTORS[blendDst];
+            descriptor.colorAttachments[0].destinationAlphaBlendFactor = BLEND_FACTORS[blendAlphaDst];
+            
+            metal_debug_log("create_render_pipeline() - Blend: src=%d dst=%d alphaSrc=%d alphaDst=%d enabled=%d", 
+                           blendSrc, blendDst, blendAlphaSrc, blendAlphaDst, blendingEnabled);
+            
+            // Only set depth-stencil formats if we have a depth buffer attached
+            // Check if ctx has depth texture information (stored during render pass setup)
+            if (ctx->hasDepthBuffer) {
+                descriptor.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float_Stencil8;
+                descriptor.stencilAttachmentPixelFormat = MTLPixelFormatDepth32Float_Stencil8;
+            } else {
+                // No depth buffer - leave formats as MTLPixelFormatInvalid (default)
+                descriptor.depthAttachmentPixelFormat = MTLPixelFormatInvalid;
+                descriptor.stencilAttachmentPixelFormat = MTLPixelFormatInvalid;
+            }
+        }
 
         // Parse vertexDesc and dynamically build vertex descriptor
         // Format: "position:float3,normal:float3,uv:float2" etc.
@@ -619,6 +684,12 @@ HL_PRIM vdynamic* HL_NAME(begin_render_pass)(vdynamic *cmdBuffer, int r, int g, 
         }
         ctx->currentDrawable = (__bridge_retained void*)drawable;
         ctx->currentCommandBuffer = (__bridge void*)commandBuffer;
+        
+        // Set pixel format to backbuffer format (BGRA8Unorm)
+        ctx->currentTargetPixelFormat = (int)MTLPixelFormatBGRA8Unorm;
+        
+        // Backbuffer rendering always has depth buffer attached
+        ctx->hasDepthBuffer = true;
 
         MTLRenderPassDescriptor *renderPassDescriptor = [MTLRenderPassDescriptor renderPassDescriptor];
         renderPassDescriptor.colorAttachments[0].texture = drawable.texture;
