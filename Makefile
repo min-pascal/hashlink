@@ -118,6 +118,9 @@ HEAPS += include/meshoptimizer/allocator.o include/meshoptimizer/overdrawoptimiz
 	include/meshoptimizer/overdrawanalyzer.o include/meshoptimizer/vcacheanalyzer.o
 HEAPS_CFLAGS = -fvisibility=hidden -I include/mikktspace -I include/meshoptimizer -I include/vhacd -I include/renderdoc
 
+METAL = libs/metal/metal.o
+METAL_CFLAGS = -std=c99 -fPIC -fobjc-arc
+
 LIB = ${PCRE} ${RUNTIME} ${STD}
 
 BOOT = src/_main.o
@@ -216,6 +219,10 @@ endif
 
 ifdef MESA
 LIBS += mesa
+endif
+
+ifeq ($(UNAME),Darwin)
+LIBS += metal
 endif
 
 ifdef DEBUG
@@ -323,6 +330,13 @@ heaps: ${HEAPS} libhl
 	mkdir -p $(BUILD_OUTPUT_DIR)
 	${CXX} ${CFLAGS} ${HEAPS_CFLAGS} -shared -o $(BUILD_OUTPUT_DIR)/heaps.hdll ${HEAPS} ${LIBFLAGS} -L$(BUILD_OUTPUT_DIR) -lhl
 
+./libs/metal/%.o: ./libs/metal/%.m
+	${CC} ${CFLAGS} -o $@ -c $< ${METAL_CFLAGS}
+
+metal: ${METAL} libhl
+	mkdir -p $(BUILD_OUTPUT_DIR)
+	${CC} ${CFLAGS} ${METAL_CFLAGS} -dynamiclib -undefined dynamic_lookup -Wl,-install_name,@rpath/metal.hdll -o $(BUILD_OUTPUT_DIR)/metal.hdll ${METAL} ${LIBFLAGS} -L$(BUILD_OUTPUT_DIR) -lhl $(SDL_LINK_FLAGS) -framework Metal -framework Foundation -framework QuartzCore -framework AppKit -framework MetalKit
+
 mesa:
 	(cd libs/mesa && ${MAKE})
 
@@ -396,7 +410,7 @@ codesign_osx:
 	${CC} ${CFLAGS} -o $@ -c $<
 
 clean_o:
-	rm -f ${STD} ${BOOT} ${RUNTIME} ${PCRE} ${HL} ${FMT} ${SDL} ${SSL} ${OPENAL} ${UI} ${UV} ${MYSQL} ${SQLITE} ${HEAPS} ${HL_DEBUG}
+	rm -f ${STD} ${BOOT} ${RUNTIME} ${PCRE} ${HL} ${FMT} ${SDL} ${SSL} ${OPENAL} ${UI} ${UV} ${MYSQL} ${SQLITE} ${HEAPS} ${METAL} ${HL_DEBUG}
 
 clean: clean_o
 	rm -rf $(BUILD_OUTPUT_DIR)
