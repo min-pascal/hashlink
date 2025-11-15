@@ -465,7 +465,18 @@ static const MTLBlendFactor BLEND_FACTORS[] = {
     MTLBlendFactorSourceAlphaSaturated,     // SrcAlphaSaturate = 10
 };
 
-HL_PRIM vdynamic* HL_NAME(create_render_pipeline)(vdynamic *vertexShader, vdynamic *fragmentShader, vstring *vertexDesc, int blendSrc, int blendDst, int blendAlphaSrc, int blendAlphaDst) {
+// Map Heaps Operation enum to MTLBlendOperation
+// MUST match order in h3d/mat/Data.hx Operation enum:
+// Add=0, Sub=1, ReverseSub=2, Min=3, Max=4
+static const MTLBlendOperation BLEND_OPS[] = {
+    MTLBlendOperationAdd,             // Add = 0
+    MTLBlendOperationSubtract,        // Sub = 1
+    MTLBlendOperationReverseSubtract, // ReverseSub = 2
+    MTLBlendOperationMin,             // Min = 3
+    MTLBlendOperationMax,             // Max = 4
+};
+
+HL_PRIM vdynamic* HL_NAME(create_render_pipeline)(vdynamic *vertexShader, vdynamic *fragmentShader, vstring *vertexDesc, int blendSrc, int blendDst, int blendAlphaSrc, int blendAlphaDst, int blendOp, int blendAlphaOp) {
     if (ctx == NULL || ctx->device == NULL || vertexShader == NULL || fragmentShader == NULL) return NULL;
 
     @autoreleasepool {
@@ -524,15 +535,15 @@ HL_PRIM vdynamic* HL_NAME(create_render_pipeline)(vdynamic *vertexShader, vdynam
             // Disable blending only for (One, Zero) which is opaque rendering
             BOOL blendingEnabled = !(blendSrc == 0 && blendDst == 1);
             descriptor.colorAttachments[0].blendingEnabled = blendingEnabled;
-            descriptor.colorAttachments[0].rgbBlendOperation = MTLBlendOperationAdd;
-            descriptor.colorAttachments[0].alphaBlendOperation = MTLBlendOperationAdd;
+            descriptor.colorAttachments[0].rgbBlendOperation = BLEND_OPS[blendOp];
+            descriptor.colorAttachments[0].alphaBlendOperation = BLEND_OPS[blendAlphaOp];
             descriptor.colorAttachments[0].sourceRGBBlendFactor = BLEND_FACTORS[blendSrc];
             descriptor.colorAttachments[0].sourceAlphaBlendFactor = BLEND_FACTORS[blendAlphaSrc];
             descriptor.colorAttachments[0].destinationRGBBlendFactor = BLEND_FACTORS[blendDst];
             descriptor.colorAttachments[0].destinationAlphaBlendFactor = BLEND_FACTORS[blendAlphaDst];
             
-            metal_debug_log("create_render_pipeline() - Blend: src=%d dst=%d alphaSrc=%d alphaDst=%d enabled=%d", 
-                           blendSrc, blendDst, blendAlphaSrc, blendAlphaDst, blendingEnabled);
+            metal_debug_log("create_render_pipeline() - Blend: src=%d dst=%d alphaSrc=%d alphaDst=%d op=%d alphaOp=%d enabled=%d", 
+                           blendSrc, blendDst, blendAlphaSrc, blendAlphaDst, blendOp, blendAlphaOp, blendingEnabled);
             
             // Only set depth-stencil formats if we have a depth buffer attached
             // Check if ctx has depth texture information (stored during render pass setup)
