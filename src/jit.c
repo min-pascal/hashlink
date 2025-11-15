@@ -308,6 +308,7 @@ struct jit_ctx {
 	int hl2c;
 	int longjump;
 	void *static_functions[8];
+	bool static_function_offset;
 };
 
 #define jit_exit() { hl_debug_break(); exit(-1); }
@@ -1846,6 +1847,7 @@ static preg *op_binop( jit_ctx *ctx, vreg *dst, vreg *a, vreg *b, hl_op bop ) {
 	case HABSTRACT:
 	case HARRAY:
 	case HI64:
+	case HGUID:
 		switch( ID2(pa->kind, pb->kind) ) {
 		case ID2(RCPU,RCPU):
 		case ID2(RCPU,RSTACK):
@@ -2313,11 +2315,12 @@ static void jit_nops( jit_ctx *ctx ) {
 static void *call_jit_c2hl = NULL;
 static void *call_jit_hl2c = NULL;
 
-static void *callback_c2hl( void **f, hl_type *t, void **args, vdynamic *ret ) {
+static void *callback_c2hl( void *_f, hl_type *t, void **args, vdynamic *ret ) {
 	/*
 		prepare stack and regs according to prepare_call_args, but by reading runtime type information
 		from the function type. The stack and regs will be setup by the trampoline function.
 	*/
+	void **f = (void**)_f;
 	unsigned char stack[MAX_ARGS * 8];
 	call_regs cregs = {0};
 	if( t->fun->nargs > MAX_ARGS )
@@ -2364,6 +2367,7 @@ static void *callback_c2hl( void **f, hl_type *t, void **args, vdynamic *ret ) {
 				*(double*)store = *(double*)v;
 				break;
 			case HI64:
+			case HGUID:
 				*(int64*)store = *(int64*)v;
 				break;
 			default:
@@ -2390,6 +2394,7 @@ static void *callback_c2hl( void **f, hl_type *t, void **args, vdynamic *ret ) {
 				*(double*)store = *(double*)v;
 				break;
 			case HI64:
+			case HGUID:
 				*(int64*)store = *(int64*)v;
 				break;
 			default:
@@ -2408,6 +2413,7 @@ static void *callback_c2hl( void **f, hl_type *t, void **args, vdynamic *ret ) {
 		ret->v.i = ((int (*)(void *, void *, void *))call_jit_c2hl)(*f, (void**)&stack + pos, &stack);
 		return &ret->v.i;
 	case HI64:
+	case HGUID:
 		ret->v.i64 = ((int64 (*)(void *, void *, void *))call_jit_c2hl)(*f, (void**)&stack + pos, &stack);
 		return &ret->v.i64;
 	case HF32:
@@ -2525,6 +2531,7 @@ static void *jit_wrapper_ptr( vclosure_wrapper *c, char *stack_args, void **regs
 	case HBOOL:
 		return (void*)(int_val)hl_dyn_casti(&ret,&hlt_dyn,tret);
 	case HI64:
+	case HGUID:
 		return (void*)(int_val)hl_dyn_casti64(&ret,&hlt_dyn);
 	default:
 		return hl_dyn_castp(&ret,&hlt_dyn,tret);
@@ -2733,6 +2740,7 @@ static void *get_dyncast( hl_type *t ) {
 	case HF64:
 		return hl_dyn_castd;
 	case HI64:
+	case HGUID:
 		return hl_dyn_casti64;
 	case HI32:
 	case HUI16:
@@ -2751,6 +2759,7 @@ static void *get_dynset( hl_type *t ) {
 	case HF64:
 		return hl_dyn_setd;
 	case HI64:
+	case HGUID:
 		return hl_dyn_seti64;
 	case HI32:
 	case HUI16:
@@ -2769,6 +2778,7 @@ static void *get_dynget( hl_type *t ) {
 	case HF64:
 		return hl_dyn_getd;
 	case HI64:
+	case HGUID:
 		return hl_dyn_geti64;
 	case HI32:
 	case HUI16:
@@ -2816,6 +2826,7 @@ static void make_dyn_cast( jit_ctx *ctx, vreg *dst, vreg *v ) {
 		case HI32:
 		case HBOOL:
 		case HI64:
+		case HGUID:
 			tmp = alloc_cpu(ctx, v, true);
 			op64(ctx, TEST, tmp, tmp);
 			XJump_small(JZero, jnull);
@@ -2847,6 +2858,7 @@ static void make_dyn_cast( jit_ctx *ctx, vreg *dst, vreg *v ) {
 	case HF32:
 	case HF64:
 	case HI64:
+	case HGUID:
 		size = begin_native_call(ctx, 2);
 		set_native_arg(ctx, pconst64(&p,(int_val)v->t));
 		break;
@@ -3156,10 +3168,15 @@ int hl_jit_function( jit_ctx *ctx, hl_module *m, hl_function *f ) {
 			break;
 		case OToSFloat:
 			if( ra == dst ) break;
-			if( ra->t->kind == HI32 || ra->t->kind == HUI16 || ra->t->kind == HUI8 ) {
-				preg *r = alloc_cpu(ctx,ra,true);
-				preg *w = alloc_fpu(ctx,dst,false);
-				op32(ctx,dst->t->kind == HF64 ? CVTSI2SD : CVTSI2SS,w,r);
+			if (ra->t->kind == HI32 || ra->t->kind == HUI16 || ra->t->kind == HUI8) {
+				preg* r = alloc_cpu(ctx, ra, true);
+				preg* w = alloc_fpu(ctx, dst, false);
+				op32(ctx, dst->t->kind == HF64 ? CVTSI2SD : CVTSI2SS, w, r);
+				store(ctx, dst, w, true);
+			} else if (ra->t->kind == HI64 ) {
+				preg* r = alloc_cpu(ctx, ra, true);
+				preg* w = alloc_fpu(ctx, dst, false);
+				op64(ctx, dst->t->kind == HF64 ? CVTSI2SD : CVTSI2SS, w, r);
 				store(ctx, dst, w, true);
 			} else if( ra->t->kind == HF64 && dst->t->kind == HF32 ) {
 				preg *r = alloc_fpu(ctx,ra,true);
@@ -3553,6 +3570,7 @@ int hl_jit_function( jit_ctx *ctx, hl_module *m, hl_function *f ) {
 							set_native_arg_fpu(ctx, fetch(rb), rb->t->kind == HF32);
 							break;
 						case HI64:
+						case HGUID:
 							size = begin_native_call(ctx,3);
 							set_native_arg(ctx, fetch(rb));
 							break;
@@ -3568,6 +3586,7 @@ int hl_jit_function( jit_ctx *ctx, hl_module *m, hl_function *f ) {
 						switch( rb->t->kind ) {
 						case HF64:
 						case HI64:
+						case HGUID:
 							size = pad_before_call(ctx,HL_WSIZE*2 + sizeof(double));
 							push_reg(ctx,rb);
 							break;
@@ -3857,6 +3876,7 @@ int hl_jit_function( jit_ctx *ctx, hl_module *m, hl_function *f ) {
 					op32(ctx,MOVSD,pmem2(&p,base->id,offset->id,1,0),value);
 					break;
 				case HI64:
+				case HGUID:
 					value = alloc_cpu(ctx, rb, true);
 					op64(ctx,MOV,pmem2(&p,base->id,offset->id,1,0),value);
 					break;
@@ -4172,6 +4192,7 @@ int hl_jit_function( jit_ctx *ctx, hl_module *m, hl_function *f ) {
 					call_native(ctx,get_dynset(rb->t),size);
 					break;
 				case HI64:
+				case HGUID:
 					size = begin_native_call(ctx, 3);
 					set_native_arg(ctx,fetch(rb));
 					set_native_arg(ctx,pconst64(&p,hl_hash_gen(hl_get_ustring(m->code,o->p2),true)));
@@ -4198,6 +4219,7 @@ int hl_jit_function( jit_ctx *ctx, hl_module *m, hl_function *f ) {
 					break;
 				case HF64:
 				case HI64:
+				case HGUID:
 					size = pad_before_call(ctx, HL_WSIZE*2 + sizeof(double));
 					push_reg(ctx,rb);
 					op32(ctx,PUSH,pconst64(&p,hl_hash_gen(hl_get_ustring(m->code,o->p2),true)),UNUSED);
@@ -4400,6 +4422,7 @@ int hl_jit_function( jit_ctx *ctx, hl_module *m, hl_function *f ) {
 			break;
 		case OAssert:
 			{
+				pad_before_call(ctx, 0);
 				jlist *j = (jlist*)hl_malloc(&ctx->galloc,sizeof(jlist));
 				j->pos = BUF_POS();
 				j->target = -2;
@@ -4586,12 +4609,17 @@ void *hl_jit_code( jit_ctx *ctx, hl_module *m, int *codesize, hl_debug_infos **d
 	if( !call_jit_c2hl ) {
 		call_jit_c2hl = code + ctx->c2hl;
 		call_jit_hl2c = code + ctx->hl2c;
-		hl_setup_callbacks2(callback_c2hl, get_wrapper, 1);
+		hl_setup.get_wrapper = get_wrapper;
+		hl_setup.static_call = callback_c2hl;
+		hl_setup.static_call_ref = true;
 #		ifdef JIT_CUSTOM_LONGJUMP
-		hl_setup_longjump(code + ctx->longjump);
+		hl_setup.throw_jump = (void(*)(jmp_buf, int))(code + ctx->longjump);
 #		endif
+	}
+	if( !ctx->static_function_offset ) {
 		int i;
-		for(i=0;i<sizeof(ctx->static_functions)/sizeof(void*);i++)
+		ctx->static_function_offset = true;
+		for(i=0;i<(int)(sizeof(ctx->static_functions)/sizeof(void*));i++)
 			ctx->static_functions[i] = (void*)(code + (int)(int_val)ctx->static_functions[i]);
 	}
 	// patch calls

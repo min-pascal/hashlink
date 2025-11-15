@@ -132,7 +132,6 @@ jobs:
         # see https://github.com/Homebrew/homebrew-core/issues/165793#issuecomment-1989441193
         # see https://github.com/Homebrew/brew/blob/master/.github/workflows/tests.yml
         brew unlink python && brew link --overwrite python
-        brew unlink python@3.12 && brew link --overwrite python@3.12
 
     - name: "Install: Required Dev Packages"
       run: |
@@ -351,7 +350,7 @@ jobs:
 
 
     - name: "Share: build artifact"
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v5
       with:
         name: ${{ matrix.target }}-${{ matrix.build_system }}-${{ matrix.architecture }}
         path: ${{ env.HASHLINK_DISTRIBUTION }}
@@ -399,7 +398,7 @@ jobs:
       uses: actions/checkout@v5
 
     - name: "Get: all build artifacts"
-      uses: actions/download-artifact@v5
+      uses: actions/download-artifact@v6
 
     - name: "Delete previous 'latest' release"
       env:
