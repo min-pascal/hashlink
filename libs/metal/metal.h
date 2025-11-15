@@ -158,6 +158,14 @@ struct metal_context {
     NSUInteger computeVertexCount;
     uint animationIndex;               // Frame counter for Mandelbrot animation
 
+    // Current frame resources
+    void *currentDrawable;           // id<CAMetalDrawable> - current drawable
+    void *currentCommandBuffer;      // id<MTLCommandBuffer> - current command buffer
+    void *depthDisabledState;        // id<MTLDepthStencilState> - depth disabled
+    void *depthEnabledState;         // id<MTLDepthStencilState> - depth enabled
+    int currentTargetPixelFormat;     // MTLPixelFormat - current render target format
+    bool hasDepthBuffer;              // Flag indicating if current render pass has depth buffer attached
+
     // Frame debugging support fields
     bool frameCaptureTrigger;          // Flag to trigger GPU frame capture
     bool frameCaptureInProgress;       // Flag indicating capture is in progress
