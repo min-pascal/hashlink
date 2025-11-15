@@ -54,18 +54,6 @@ void metal_init_context(void) {
         ctx->commandQueue = (__bridge_retained void*)commandQueue; // Bridge with retain
         metal_debug_log("Metal command queue created");
 
-        // Create depth stencil state with depth testing DISABLED for 2D rendering
-        MTLDepthStencilDescriptor *depthDisabledDescriptor = [[MTLDepthStencilDescriptor alloc] init];
-        depthDisabledDescriptor.depthCompareFunction = MTLCompareFunctionAlways; // Always pass depth test
-        depthDisabledDescriptor.depthWriteEnabled = NO; // Don't write to depth buffer
-        id<MTLDepthStencilState> depthDisabledState = [device newDepthStencilStateWithDescriptor:depthDisabledDescriptor];
-        if (depthDisabledState) {
-            ctx->depthDisabledState = (__bridge_retained void*)depthDisabledState;
-            metal_debug_log("Created depth-disabled state for 2D rendering");
-        } else {
-            metal_debug_log("WARNING: Failed to create depth-disabled state");
-        }
-
         // Initialize animation state
         ctx->angle = 0.0f;
         ctx->frameIndex = 0;

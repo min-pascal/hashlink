@@ -93,6 +93,8 @@ struct metal_context {
     // Current frame rendering state
     void *currentDrawable;     // id<CAMetalDrawable> - current frame's drawable
     void *currentCommandBuffer; // id<MTLCommandBuffer> - current frame's command buffer
+    void *depthDisabledState;  // id<MTLDepthStencilState> - depth disabled
+    void *depthEnabledState;   // id<MTLDepthStencilState> - depth enabled
 
     // Pipeline states
     void *pipelineState;           // id<MTLRenderPipelineState>
@@ -171,15 +173,16 @@ struct metal_context {
     NSUInteger computeVertexCount;
     uint animationIndex;               // Frame counter for Mandelbrot animation
 
+    // Current frame resources
+    int currentTargetPixelFormat;     // MTLPixelFormat - current render target format
+    bool hasDepthBuffer;              // Flag indicating if current render pass has depth buffer attached
+
     // Frame debugging support fields
     bool frameCaptureTrigger;          // Flag to trigger GPU frame capture
     bool frameCaptureInProgress;       // Flag indicating capture is in progress
     bool hasFrameCaptured;             // Flag indicating if a capture has been completed
     void *captureStartTime;            // NSDate* - time when app started for auto-capture timeout
     double autoCaptureTimeoutSecs;     // Timeout for automatic capture triggering
-    
-    // 2D rendering depth stencil state
-    void *depthDisabledState;          // id<MTLDepthStencilState> - depth testing disabled for 2D
 };
 
 // Global context
