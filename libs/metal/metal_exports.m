@@ -879,11 +879,14 @@ HL_PRIM vdynamic* HL_NAME(begin_texture_render_pass)(vdynamic *cmdBuffer, vdynam
 
             renderPassDescriptor.colorAttachments[0].storeAction = MTLStoreActionStore;
 
-            // CRITICAL: Attach depth-stencil texture for depth and stencil testing to work!
-            // Note: For render-to-texture, we might need a separate depth texture in the future
+            // Only attach ctx->depthTexture if it matches the target texture size
+            // Otherwise Metal will clip rendering to the smaller of the two sizes!
             if (ctx->depthTexture != NULL) {
                 id<MTLTexture> depthTexture = (__bridge id<MTLTexture>)ctx->depthTexture;
-                renderPassDescriptor.depthAttachment.texture = depthTexture;
+                
+                // Check if depth texture matches target size
+                if (depthTexture.width == metalTexture.width && depthTexture.height == metalTexture.height) {
+                    renderPassDescriptor.depthAttachment.texture = depthTexture;
                 if (a < 0) {
                     renderPassDescriptor.depthAttachment.loadAction = MTLLoadActionLoad;
                 } else {
@@ -912,6 +915,15 @@ HL_PRIM vdynamic* HL_NAME(begin_texture_render_pass)(vdynamic *cmdBuffer, vdynam
 
         // Set winding order to counter-clockwise (Heaps/OpenGL convention)
         [encoder setFrontFacingWinding:MTLWindingClockwise];
+
+        // CRITICAL: Set initial viewport and scissor for depth-only passes
+        if (isDepthTexture) {
+            MTLViewport viewport = {0, 0, (double)metalTexture.width, (double)metalTexture.height, 0.0, 1.0};
+            [encoder setViewport:viewport];
+            MTLScissorRect scissor = {0, 0, metalTexture.width, metalTexture.height};
+            [encoder setScissorRect:scissor];
+            metal_debug_log("NATIVE: Initial viewport for depth: %lu x %lu", (unsigned long)metalTexture.width, (unsigned long)metalTexture.height);
+        }
 
         metal_debug_log("begin_texture_render_pass() - SUCCESS");
         return (vdynamic*)(__bridge_retained void*)encoder;
