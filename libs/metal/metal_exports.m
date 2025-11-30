@@ -631,6 +631,9 @@ if (vertexDesc != NULL && vertexDesc->bytes != NULL) {
             } else if ([type isEqualToString:@"float4"]) {
                 format = MTLVertexFormatFloat4;
                 size = 16;
+            } else if ([type isEqualToString:@"uchar4"]) {
+                format = MTLVertexFormatUChar4;
+                size = 4;
             } else {
                 metal_debug_log("Unknown vertex type: %s", [type UTF8String]);
                 continue;
