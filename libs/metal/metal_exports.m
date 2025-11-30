@@ -738,7 +738,7 @@ HL_PRIM vdynamic* HL_NAME(begin_render_pass)(vdynamic *cmdBuffer, int r, int g, 
             id<MTLTexture> depthTexture = (__bridge id<MTLTexture>)ctx->depthTexture;
             renderPassDescriptor.depthAttachment.texture = depthTexture;
             renderPassDescriptor.depthAttachment.loadAction = MTLLoadActionClear;
-            renderPassDescriptor.depthAttachment.storeAction = MTLStoreActionDontCare;
+            renderPassDescriptor.depthAttachment.storeAction = MTLStoreActionStore;  // MUST Store to preserve depth between passes
             renderPassDescriptor.depthAttachment.clearDepth = 1.0;
 
             // Attach stencil (using the same texture as depth since we use combined depth-stencil format)
@@ -904,6 +904,7 @@ HL_PRIM vdynamic* HL_NAME(begin_texture_render_pass)(vdynamic *cmdBuffer, vdynam
                     renderPassDescriptor.stencilAttachment.clearStencil = 0;
                 }
                 renderPassDescriptor.stencilAttachment.storeAction = MTLStoreActionStore;
+                }
             }
         }
 
