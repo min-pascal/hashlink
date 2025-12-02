@@ -108,8 +108,9 @@ bool metal_setup_window_context(vdynamic *win) {
         layer.drawableSize = CGSizeMake(width, height);
         metal_debug_log("Metal layer configured with size %d x %d", width, height);
 
-        // Create depth texture for perspective rendering
-        MTLTextureDescriptor *depthTextureDescriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatDepth32Float
+        // Create depth-stencil texture for perspective rendering
+        // CRITICAL: Must use Depth32Float_Stencil8 (not Depth32Float) to support both depth and stencil
+        MTLTextureDescriptor *depthTextureDescriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatDepth32Float_Stencil8
                                                                                                           width:width
                                                                                                          height:height
                                                                                                       mipmapped:NO];
