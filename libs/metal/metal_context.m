@@ -3,6 +3,7 @@
 metal_context *ctx = NULL;
 
 void metal_debug_log(const char* message, ...) {
+    return; // Debug logging disabled for performance
     va_list args;
     va_start(args, message);
     FILE *f = fopen(DEBUG_FILE, "a");
