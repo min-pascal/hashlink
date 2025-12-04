@@ -175,6 +175,7 @@ struct metal_context {
 
     // Current frame resources
     int currentTargetPixelFormat;     // MTLPixelFormat - current render target format
+    int currentMRTCount;              // Number of color attachments for MRT (1 for single target)
     bool hasDepthBuffer;              // Flag indicating if current render pass has depth buffer attached
 
     // Frame debugging support fields
