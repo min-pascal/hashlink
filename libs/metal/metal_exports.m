@@ -553,22 +553,32 @@ if (isDepthFormat) {
         descriptor.stencilAttachmentPixelFormat = targetPixelFormat;
     }
 } else {
-    // Color rendering - set up color attachment
-    descriptor.colorAttachments[0].pixelFormat = targetPixelFormat;
-
-    // Configure blend state from parameters
-    // Disable blending only for (One, Zero) which is opaque rendering
-    BOOL blendingEnabled = !(blendSrc == 0 && blendDst == 1);
-    descriptor.colorAttachments[0].blendingEnabled = blendingEnabled;
-    descriptor.colorAttachments[0].rgbBlendOperation = BLEND_OPS[blendOp];
-    descriptor.colorAttachments[0].alphaBlendOperation = BLEND_OPS[blendAlphaOp];
-    descriptor.colorAttachments[0].sourceRGBBlendFactor = BLEND_FACTORS[blendSrc];
-    descriptor.colorAttachments[0].sourceAlphaBlendFactor = BLEND_FACTORS[blendAlphaSrc];
-    descriptor.colorAttachments[0].destinationRGBBlendFactor = BLEND_FACTORS[blendDst];
-    descriptor.colorAttachments[0].destinationAlphaBlendFactor = BLEND_FACTORS[blendAlphaDst];
+    // Color rendering - set up color attachment(s)
+    // Check for MRT (Multiple Render Targets)
+    int mrtCount = ctx->currentMRTCount;
+    if (mrtCount <= 0) mrtCount = 1;  // Default to single target
+    
+    metal_debug_log("create_render_pipeline() - Setting up %d color attachment(s)", mrtCount);
+    
+    // Configure all color attachments with the same format (for now)
+    // MRT typically uses same format for all targets in Heaps
+    for (int i = 0; i < mrtCount; i++) {
+        descriptor.colorAttachments[i].pixelFormat = targetPixelFormat;
+        
+        // Configure blend state from parameters
+        // Disable blending only for (One, Zero) which is opaque rendering
+        BOOL blendingEnabled = !(blendSrc == 0 && blendDst == 1);
+        descriptor.colorAttachments[i].blendingEnabled = blendingEnabled;
+        descriptor.colorAttachments[i].rgbBlendOperation = BLEND_OPS[blendOp];
+        descriptor.colorAttachments[i].alphaBlendOperation = BLEND_OPS[blendAlphaOp];
+        descriptor.colorAttachments[i].sourceRGBBlendFactor = BLEND_FACTORS[blendSrc];
+        descriptor.colorAttachments[i].sourceAlphaBlendFactor = BLEND_FACTORS[blendAlphaSrc];
+        descriptor.colorAttachments[i].destinationRGBBlendFactor = BLEND_FACTORS[blendDst];
+        descriptor.colorAttachments[i].destinationAlphaBlendFactor = BLEND_FACTORS[blendAlphaDst];
+    }
 
     metal_debug_log("create_render_pipeline() - Blend: src=%d dst=%d alphaSrc=%d alphaDst=%d op=%d alphaOp=%d enabled=%d",
-                   blendSrc, blendDst, blendAlphaSrc, blendAlphaDst, blendOp, blendAlphaOp, blendingEnabled);
+                   blendSrc, blendDst, blendAlphaSrc, blendAlphaDst, blendOp, blendAlphaOp, !(blendSrc == 0 && blendDst == 1));
 
     // Only set depth-stencil formats if we have a depth buffer attached
     // Check if ctx has depth texture information (stored during render pass setup)
@@ -726,6 +736,7 @@ HL_PRIM vdynamic* HL_NAME(begin_render_pass)(vdynamic *cmdBuffer, int r, int g, 
 
         // Set pixel format to backbuffer format (BGRA8Unorm)
         ctx->currentTargetPixelFormat = (int)MTLPixelFormatBGRA8Unorm;
+        ctx->currentMRTCount = 1;  // Single render target
 
         // Backbuffer rendering always has depth buffer attached
         ctx->hasDepthBuffer = true;
@@ -787,6 +798,11 @@ HL_PRIM vdynamic* HL_NAME(resume_render_pass)(vdynamic *cmdBuffer) {
         
         // Update command buffer reference
         ctx->currentCommandBuffer = (__bridge void*)commandBuffer;
+        
+        // CRITICAL: Reset target format and MRT count for backbuffer
+        ctx->currentTargetPixelFormat = (int)MTLPixelFormatBGRA8Unorm;
+        ctx->currentMRTCount = 1;
+        ctx->hasDepthBuffer = true;  // Backbuffer has depth buffer
 
         MTLRenderPassDescriptor *renderPassDescriptor = [MTLRenderPassDescriptor renderPassDescriptor];
         renderPassDescriptor.colorAttachments[0].texture = drawable.texture;
@@ -839,6 +855,12 @@ HL_PRIM vdynamic* HL_NAME(begin_texture_render_pass)(vdynamic *cmdBuffer, vdynam
                                pixelFormat == MTLPixelFormatDepth32Float ||
                                pixelFormat == MTLPixelFormatDepth32Float_Stencil8 ||
                                pixelFormat == MTLPixelFormatDepth24Unorm_Stencil8);
+
+        // Store texture format and MRT count for pipeline creation
+        ctx->currentTargetPixelFormat = (int)pixelFormat;
+        ctx->currentMRTCount = 1;  // Single render target
+        ctx->renderTargetWidth = (int)metalTexture.width;
+        ctx->renderTargetHeight = (int)metalTexture.height;
 
         MTLRenderPassDescriptor *renderPassDescriptor = [MTLRenderPassDescriptor renderPassDescriptor];
 
@@ -930,6 +952,99 @@ HL_PRIM vdynamic* HL_NAME(begin_texture_render_pass)(vdynamic *cmdBuffer, vdynam
         }
 
         metal_debug_log("begin_texture_render_pass() - SUCCESS");
+        return (vdynamic*)(__bridge_retained void*)encoder;
+    }
+}
+
+// Begin a Multiple Render Target (MRT) render pass with multiple color attachments
+HL_PRIM vdynamic* HL_NAME(begin_mrt_render_pass)(vdynamic *cmdBuffer, varray *textures, int r, int g, int b, int a) {
+    if (ctx == NULL || cmdBuffer == NULL || textures == NULL) return NULL;
+    
+    @autoreleasepool {
+        id<MTLCommandBuffer> commandBuffer = (__bridge id<MTLCommandBuffer>)cmdBuffer;
+        
+        // Update command buffer reference
+        ctx->currentCommandBuffer = (__bridge void*)commandBuffer;
+        
+        int texCount = textures->size;
+        if (texCount == 0) return NULL;
+        
+        MTLRenderPassDescriptor *renderPassDescriptor = [MTLRenderPassDescriptor renderPassDescriptor];
+        
+        vdynamic **texPtrs = hl_aptr(textures, vdynamic*);
+        id<MTLTexture> firstTexture = nil;
+        
+        // Set up each color attachment
+        for (int i = 0; i < texCount; i++) {
+            if (texPtrs[i] == NULL) {
+                continue;
+            }
+            
+            id<MTLTexture> metalTexture = (__bridge id<MTLTexture>)texPtrs[i];
+            if (i == 0) firstTexture = metalTexture;
+            
+            renderPassDescriptor.colorAttachments[i].texture = metalTexture;
+            
+            if (a < 0) {
+                renderPassDescriptor.colorAttachments[i].loadAction = MTLLoadActionLoad;
+            } else {
+                renderPassDescriptor.colorAttachments[i].loadAction = MTLLoadActionClear;
+                renderPassDescriptor.colorAttachments[i].clearColor = MTLClearColorMake(r/255.0, g/255.0, b/255.0, a/255.0);
+            }
+            renderPassDescriptor.colorAttachments[i].storeAction = MTLStoreActionStore;
+        }
+        
+        // Attach depth buffer if available and matches first texture size
+        if (ctx->depthTexture != NULL && firstTexture != nil) {
+            id<MTLTexture> depthTexture = (__bridge id<MTLTexture>)ctx->depthTexture;
+            
+            if (depthTexture.width == firstTexture.width && depthTexture.height == firstTexture.height) {
+                renderPassDescriptor.depthAttachment.texture = depthTexture;
+                if (a < 0) {
+                    renderPassDescriptor.depthAttachment.loadAction = MTLLoadActionLoad;
+                } else {
+                    renderPassDescriptor.depthAttachment.loadAction = MTLLoadActionClear;
+                    renderPassDescriptor.depthAttachment.clearDepth = 1.0;
+                }
+                renderPassDescriptor.depthAttachment.storeAction = MTLStoreActionStore;
+                
+                renderPassDescriptor.stencilAttachment.texture = depthTexture;
+                if (a < 0) {
+                    renderPassDescriptor.stencilAttachment.loadAction = MTLLoadActionLoad;
+                } else {
+                    renderPassDescriptor.stencilAttachment.loadAction = MTLLoadActionClear;
+                    renderPassDescriptor.stencilAttachment.clearStencil = 0;
+                }
+                renderPassDescriptor.stencilAttachment.storeAction = MTLStoreActionStore;
+            }
+        }
+        
+        // Store MRT count and pixel format for pipeline creation
+        ctx->currentMRTCount = texCount;
+        if (firstTexture != nil) {
+            ctx->currentTargetPixelFormat = (int)firstTexture.pixelFormat;
+            ctx->renderTargetWidth = (int)firstTexture.width;
+            ctx->renderTargetHeight = (int)firstTexture.height;
+        }
+        
+        id<MTLRenderCommandEncoder> encoder = [commandBuffer renderCommandEncoderWithDescriptor:renderPassDescriptor];
+        if (encoder == NULL) {
+            metal_debug_log("ERROR: begin_mrt_render_pass() - failed to create encoder!");
+            return NULL;
+        }
+        
+        // Set winding order
+        [encoder setFrontFacingWinding:MTLWindingClockwise];
+        
+        // Set viewport based on first texture
+        if (firstTexture != nil) {
+            MTLViewport viewport = {0, 0, (double)firstTexture.width, (double)firstTexture.height, 0.0, 1.0};
+            [encoder setViewport:viewport];
+            MTLScissorRect scissor = {0, 0, firstTexture.width, firstTexture.height};
+            [encoder setScissorRect:scissor];
+        }
+        
+        metal_debug_log("begin_mrt_render_pass() - SUCCESS with %d targets", texCount);
         return (vdynamic*)(__bridge_retained void*)encoder;
     }
 }
@@ -1278,6 +1393,7 @@ DEFINE_PRIM(_VOID, dispose_pipeline, _DYN);
 DEFINE_PRIM(_DYN, begin_render_pass, _DYN _I32 _I32 _I32 _I32);
 DEFINE_PRIM(_DYN, resume_render_pass, _DYN);
 DEFINE_PRIM(_DYN, begin_texture_render_pass, _DYN _DYN _I32 _I32 _I32 _I32 _DYN);
+DEFINE_PRIM(_DYN, begin_mrt_render_pass, _DYN _ARR _I32 _I32 _I32 _I32);
 DEFINE_PRIM(_DYN, begin_depth_render_pass, _DYN _DYN _F64);
 DEFINE_PRIM(_VOID, set_render_pipeline_state, _DYN _DYN);
 DEFINE_PRIM(_VOID, set_depth_state, _DYN _BOOL _BOOL);
