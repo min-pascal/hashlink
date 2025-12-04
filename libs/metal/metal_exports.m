@@ -859,8 +859,6 @@ HL_PRIM vdynamic* HL_NAME(begin_texture_render_pass)(vdynamic *cmdBuffer, vdynam
         // Store texture format and MRT count for pipeline creation
         ctx->currentTargetPixelFormat = (int)pixelFormat;
         ctx->currentMRTCount = 1;  // Single render target
-        ctx->renderTargetWidth = (int)metalTexture.width;
-        ctx->renderTargetHeight = (int)metalTexture.height;
 
         MTLRenderPassDescriptor *renderPassDescriptor = [MTLRenderPassDescriptor renderPassDescriptor];
 
@@ -1023,8 +1021,6 @@ HL_PRIM vdynamic* HL_NAME(begin_mrt_render_pass)(vdynamic *cmdBuffer, varray *te
         ctx->currentMRTCount = texCount;
         if (firstTexture != nil) {
             ctx->currentTargetPixelFormat = (int)firstTexture.pixelFormat;
-            ctx->renderTargetWidth = (int)firstTexture.width;
-            ctx->renderTargetHeight = (int)firstTexture.height;
         }
         
         id<MTLRenderCommandEncoder> encoder = [commandBuffer renderCommandEncoderWithDescriptor:renderPassDescriptor];
