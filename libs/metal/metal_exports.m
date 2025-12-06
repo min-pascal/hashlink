@@ -836,7 +836,7 @@ HL_PRIM vdynamic* HL_NAME(resume_render_pass)(vdynamic *cmdBuffer) {
     }
 }
 
-HL_PRIM vdynamic* HL_NAME(begin_texture_render_pass)(vdynamic *cmdBuffer, vdynamic *texture, int r, int g, int b, int a) {
+HL_PRIM vdynamic* HL_NAME(begin_texture_render_pass)(vdynamic *cmdBuffer, vdynamic *texture, int r, int g, int b, int a, vdynamic *depthTexParam, int layer, int mipLevel) {
     if (ctx == NULL || cmdBuffer == NULL || texture == NULL) {
         metal_debug_log("ERROR: begin_texture_render_pass() - invalid parameters");
         return NULL;
@@ -889,7 +889,11 @@ HL_PRIM vdynamic* HL_NAME(begin_texture_render_pass)(vdynamic *cmdBuffer, vdynam
             }
         } else {
             // Color render pass
+            // For cube maps or texture arrays, set the slice (layer)
+            // For mipmapped textures, set the mip level
             renderPassDescriptor.colorAttachments[0].texture = metalTexture;
+            renderPassDescriptor.colorAttachments[0].slice = layer;
+            renderPassDescriptor.colorAttachments[0].level = mipLevel;
 
             // If alpha is negative, use Load action to preserve existing content (additive rendering)
             // Otherwise use Clear action
@@ -1388,8 +1392,8 @@ DEFINE_PRIM(_VOID, dispose_pipeline, _DYN);
 
 DEFINE_PRIM(_DYN, begin_render_pass, _DYN _I32 _I32 _I32 _I32);
 DEFINE_PRIM(_DYN, resume_render_pass, _DYN);
-DEFINE_PRIM(_DYN, begin_texture_render_pass, _DYN _DYN _I32 _I32 _I32 _I32 _DYN);
 DEFINE_PRIM(_DYN, begin_mrt_render_pass, _DYN _ARR _I32 _I32 _I32 _I32);
+DEFINE_PRIM(_DYN, begin_texture_render_pass, _DYN _DYN _I32 _I32 _I32 _I32 _DYN _I32 _I32);
 DEFINE_PRIM(_DYN, begin_depth_render_pass, _DYN _DYN _F64);
 DEFINE_PRIM(_VOID, set_render_pipeline_state, _DYN _DYN);
 DEFINE_PRIM(_VOID, set_depth_state, _DYN _BOOL _BOOL);
