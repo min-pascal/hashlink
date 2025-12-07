@@ -1169,7 +1169,13 @@ HL_PRIM vdynamic* HL_NAME(begin_mrt_render_pass)(vdynamic *cmdBuffer, varray *te
                     renderPassDescriptor.stencilAttachment.clearStencil = 0;
                 }
                 renderPassDescriptor.stencilAttachment.storeAction = MTLStoreActionStore;
+                
+                // CRITICAL: Set hasDepthBuffer so pipeline is created with correct depth format
+                ctx->hasDepthBuffer = true;
             }
+        } else {
+            // No depth buffer for this MRT pass
+            ctx->hasDepthBuffer = false;
         }
         
         // Store MRT count and pixel format for pipeline creation
