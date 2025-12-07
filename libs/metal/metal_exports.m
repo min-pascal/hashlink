@@ -159,6 +159,7 @@ HL_PRIM bool HL_NAME(upload_buffer_data)(vdynamic *buffer, vbyte *data, int size
         // Log ALL buffer uploads to debug lighting issue
         metal_debug_log("upload_buffer_data() - size=%d, offset=%d", size, offset);
 
+#ifdef METAL_DEBUG
         // Verify data after upload for parameter buffers (128 bytes = 8 vec4s)
         if (size == 128 && offset == 0) {
             float *floats = (float*)metalBuffer.contents;
@@ -173,6 +174,33 @@ HL_PRIM bool HL_NAME(upload_buffer_data)(vdynamic *buffer, vbyte *data, int size
             metal_debug_log("vec4[7] (viewportB): [%.6f, %.6f, %.6f, %.6f]", floats[28], floats[29], floats[30], floats[31]);
             metal_debug_log("=== END NATIVE VERIFICATION ===");
         }
+        
+        // Verify data after upload for fragment parameter buffers (112 bytes = 7 vec4s)
+        if (size == 112 && offset == 0) {
+            float *floats = (float*)metalBuffer.contents;
+            metal_debug_log("=== NATIVE SIDE: Fragment parameter buffer received (112 bytes) ===");
+            metal_debug_log("vec4[0] (albedo): [%.6f, %.6f, %.6f, %.6f]", floats[0], floats[1], floats[2], floats[3]);
+            metal_debug_log("vec4[1] (metalness): [%.6f, %.6f, %.6f, %.6f]", floats[4], floats[5], floats[6], floats[7]);
+            metal_debug_log("vec4[2] (roughness): [%.6f, %.6f, %.6f, %.6f]", floats[8], floats[9], floats[10], floats[11]);
+            metal_debug_log("vec4[3] (occlusion): [%.6f, %.6f, %.6f, %.6f]", floats[12], floats[13], floats[14], floats[15]);
+            metal_debug_log("vec4[4] (emissive): [%.6f, %.6f, %.6f, %.6f]", floats[16], floats[17], floats[18], floats[19]);
+            metal_debug_log("vec4[5] (custom1): [%.6f, %.6f, %.6f, %.6f]", floats[20], floats[21], floats[22], floats[23]);
+            metal_debug_log("vec4[6] (custom2): [%.6f, %.6f, %.6f, %.6f]", floats[24], floats[25], floats[26], floats[27]);
+            metal_debug_log("=== END FRAGMENT NATIVE VERIFICATION ===");
+        }
+        
+        // Verify data after upload for lighting parameter buffers (80 bytes = 5 vec4s)
+        if (size == 80 && offset == 0) {
+            float *floats = (float*)metalBuffer.contents;
+            metal_debug_log("=== NATIVE SIDE: Lighting parameter buffer received (80 bytes) ===");
+            metal_debug_log("vec4[0]: [%.6f, %.6f, %.6f, %.6f]", floats[0], floats[1], floats[2], floats[3]);
+            metal_debug_log("vec4[1]: [%.6f, %.6f, %.6f, %.6f]", floats[4], floats[5], floats[6], floats[7]);
+            metal_debug_log("vec4[2]: [%.6f, %.6f, %.6f, %.6f]", floats[8], floats[9], floats[10], floats[11]);
+            metal_debug_log("vec4[3]: [%.6f, %.6f, %.6f, %.6f]", floats[12], floats[13], floats[14], floats[15]);
+            metal_debug_log("vec4[4]: [%.6f, %.6f, %.6f, %.6f]", floats[16], floats[17], floats[18], floats[19]);
+            metal_debug_log("=== END LIGHTING NATIVE VERIFICATION ===");
+        }
+#endif // METAL_DEBUG
         
         return true;
     }
