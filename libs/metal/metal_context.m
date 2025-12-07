@@ -2,19 +2,74 @@
 
 metal_context *ctx = NULL;
 
-void metal_debug_log(const char* message, ...) {
-    return; // Debug logging disabled for performance
+// ============================================================================
+// Error logging - ALWAYS compiled in (errors indicate real problems)
+// ============================================================================
+void metal_log_error_impl(const char* message, ...) {
     va_list args;
     va_start(args, message);
-    FILE *f = fopen(DEBUG_FILE, "a");
-    if (f) {
-        fprintf(f, "[METAL] ");
-        vfprintf(f, message, args);
-        fprintf(f, "\n");
-        fclose(f);
-    }
+    fprintf(stderr, "[METAL ERROR] ");
+    vfprintf(stderr, message, args);
+    fprintf(stderr, "\n");
+    fflush(stderr);
     va_end(args);
 }
+
+// ============================================================================
+// Debug logging - Only compiled when METAL_DEBUG is defined
+// ============================================================================
+#ifdef METAL_DEBUG
+
+static int metal_log_level = 0;  // Default: errors only
+
+void metal_set_log_level(int level) {
+    metal_log_level = level;
+    if (level > 0) {
+        fprintf(stderr, "[METAL] Log level set to %d\n", level);
+    }
+}
+
+int metal_get_log_level(void) {
+    return metal_log_level;
+}
+
+void metal_debug_log_impl(const char* message, ...) {
+    if (metal_log_level < 3) return;
+    
+    va_list args;
+    va_start(args, message);
+    fprintf(stderr, "[METAL] ");
+    vfprintf(stderr, message, args);
+    fprintf(stderr, "\n");
+    fflush(stderr);
+    va_end(args);
+}
+
+void metal_log_warning_impl(const char* message, ...) {
+    if (metal_log_level < 1) return;
+    
+    va_list args;
+    va_start(args, message);
+    fprintf(stderr, "[METAL WARNING] ");
+    vfprintf(stderr, message, args);
+    fprintf(stderr, "\n");
+    fflush(stderr);
+    va_end(args);
+}
+
+void metal_log_info_impl(const char* message, ...) {
+    if (metal_log_level < 2) return;
+    
+    va_list args;
+    va_start(args, message);
+    fprintf(stderr, "[METAL INFO] ");
+    vfprintf(stderr, message, args);
+    fprintf(stderr, "\n");
+    fflush(stderr);
+    va_end(args);
+}
+
+#endif // METAL_DEBUG
 
 void metal_init_context(void) {
     if (ctx != NULL) return;

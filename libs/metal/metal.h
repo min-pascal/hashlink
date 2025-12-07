@@ -195,8 +195,42 @@ struct metal_context {
 // Global context
 extern metal_context *ctx;
 
-// Debug utilities
-void metal_debug_log(const char* message, ...);
+// ============================================================================
+// Debug/Logging System
+// ============================================================================
+// Compile with -DMETAL_DEBUG to enable verbose logging
+// Without this flag, all debug/warning/info logs compile to nothing (zero overhead)
+//
+// Logging levels (when METAL_DEBUG is defined):
+// 0 = errors only (default)
+// 1 = warnings + errors
+// 2 = info + warnings + errors  
+// 3 = verbose (all debug output)
+
+// Error logging - ALWAYS available (errors indicate real problems)
+void metal_log_error_impl(const char* message, ...);
+#define metal_log_error(...) metal_log_error_impl(__VA_ARGS__)
+
+#ifdef METAL_DEBUG
+    // Debug build: logging functions are available and respect log level
+    void metal_set_log_level(int level);
+    int metal_get_log_level(void);
+    void metal_debug_log_impl(const char* message, ...);
+    void metal_log_warning_impl(const char* message, ...);
+    void metal_log_info_impl(const char* message, ...);
+    
+    #define metal_debug_log(...) metal_debug_log_impl(__VA_ARGS__)
+    #define metal_log_warning(...) metal_log_warning_impl(__VA_ARGS__)
+    #define metal_log_info(...) metal_log_info_impl(__VA_ARGS__)
+#else
+    // Release build: all non-error logging compiles to nothing (zero overhead)
+    static inline void metal_set_log_level(int level) { (void)level; }
+    static inline int metal_get_log_level(void) { return 0; }
+    
+    #define metal_debug_log(...) ((void)0)
+    #define metal_log_warning(...) ((void)0)
+    #define metal_log_info(...) ((void)0)
+#endif
 
 // Context management functions (metal_context.m)
 void metal_init_context(void);
