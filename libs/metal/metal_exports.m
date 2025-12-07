@@ -709,7 +709,7 @@ if (vertexDesc != NULL && vertexDesc->bytes != NULL) {
     for (NSString *attr in attributes) {
         NSArray *parts = [attr componentsSeparatedByString:@":"];
         if (parts.count == 2) {
-            NSString *name = [parts[0] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+            // Name is parts[0], type is parts[1]
             NSString *type = [parts[1] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
 
             MTLVertexFormat format;
