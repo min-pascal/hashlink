@@ -1517,6 +1517,23 @@ DEFINE_PRIM(_VOID, draw_primitives, _DYN _I32 _I32 _I32);
 DEFINE_PRIM(_VOID, draw_indexed_primitives, _DYN _I32 _I32 _DYN _I32);
 DEFINE_PRIM(_VOID, end_encoding, _DYN);
 
+// Logging control - set verbosity level (0=errors, 1=warnings, 2=info, 3=verbose)
+HL_PRIM void HL_NAME(set_debug_level)(int level) {
+    metal_set_log_level(level);
+}
+DEFINE_PRIM(_VOID, set_debug_level, _I32);
+
+// Diagnostic logging function
+HL_PRIM void HL_NAME(log_event)(const char *eventName, int param1, int param2) {
+    FILE *f = fopen("/tmp/metal_events.log", "a");
+    if (f) {
+        fprintf(f, "[EVENT] %s param1=%d param2=%d\n", eventName, param1, param2);
+        fflush(f);
+        fclose(f);
+    }
+}
+DEFINE_PRIM(_VOID, log_event, _STRING _I32 _I32);
+
 DEFINE_PRIM(_VOID, set_viewport, _DYN _F64 _F64 _F64 _F64);
 DEFINE_PRIM(_VOID, set_scissor_rect, _DYN _I32 _I32 _I32 _I32);
 DEFINE_PRIM(_VOID, set_stencil_state, _DYN _BOOL _BOOL _I32 _I32 _I32 _I32 _I32 _I32 _I32 _I32 _I32 _I32 _I32);
