@@ -1184,6 +1184,28 @@ HL_PRIM vdynamic* HL_NAME(begin_mrt_render_pass)(vdynamic *cmdBuffer, varray *te
             ctx->currentTargetPixelFormat = (int)firstTexture.pixelFormat;
         }
         
+        // CRITICAL: Store MRT textures for resource synchronization in next pass
+        // This allows the lighting pass to read from the G-Buffers written here
+        ctx->lastMRTCount = texCount;
+        
+        // Store MRT textures (only log in verbose mode)
+        for (int i = 0; i < texCount; i++) {
+            if (texPtrs[i] != NULL) {
+                id<MTLTexture> metalTexture = (__bridge id<MTLTexture>)texPtrs[i];
+                ctx->lastMRTTextures[i] = (__bridge_retained void*)metalTexture;
+                metal_debug_log("MRT[%d] STORED: ptr=%p dim=%lux%u", 
+                    i, metalTexture, (unsigned long)metalTexture.width, (unsigned)metalTexture.height);
+            } else {
+                ctx->lastMRTTextures[i] = NULL;
+            }
+        }
+        metal_debug_log("MRT_STORAGE_COMPLETE: ctx->lastMRTCount=%d", ctx->lastMRTCount);
+        
+        // Store depth texture reference if available
+        if (ctx->depthTexture != NULL) {
+            ctx->lastMRTDepthTexture = ctx->depthTexture;
+        }
+        
         id<MTLRenderCommandEncoder> encoder = [commandBuffer renderCommandEncoderWithDescriptor:renderPassDescriptor];
         if (encoder == NULL) {
             metal_debug_log("ERROR: begin_mrt_render_pass() - failed to create encoder!");
