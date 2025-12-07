@@ -577,6 +577,7 @@ HL_PRIM vdynamic* HL_NAME(create_render_pipeline)(vdynamic *vertexShader, vdynam
         id<MTLFunction> vertexFunction = (__bridge id<MTLFunction>)vertexShader;
         id<MTLFunction> fragmentFunction = (__bridge id<MTLFunction>)fragmentShader;
 
+#ifdef METAL_DEBUG
         // Debug: log the vertex descriptor string
         if (vertexDesc != NULL && vertexDesc->bytes != NULL) {
             const char *descStr = (const char*)hl_to_utf8(vertexDesc->bytes);
@@ -584,6 +585,7 @@ HL_PRIM vdynamic* HL_NAME(create_render_pipeline)(vdynamic *vertexShader, vdynam
         } else {
             metal_debug_log("create_render_pipeline() - vertexDesc is NULL");
         }
+#endif
 
         MTLRenderPipelineDescriptor *descriptor = [[MTLRenderPipelineDescriptor alloc] init];
         descriptor.vertexFunction = vertexFunction;
