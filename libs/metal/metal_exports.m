@@ -934,6 +934,31 @@ HL_PRIM vdynamic* HL_NAME(resume_render_pass)(vdynamic *cmdBuffer) {
 
         // Set winding order to counter-clockwise (Heaps/OpenGL convention)
         [encoder setFrontFacingWinding:MTLWindingClockwise];
+        
+        // CRITICAL FIX: Declare G-Buffer/MRT textures as resources for the lighting pass
+        // This ensures Metal properly synchronizes texture data from the previous G-Buffer pass
+        // Without this, the lighting shader may receive invalid/uninitialized texture data
+        metal_debug_log("resume_render_pass: About to declare %d MRT resources", ctx->lastMRTCount);
+        if (ctx->lastMRTCount > 0) {
+            metal_debug_log("resume_render_pass: Declaring MRT textures...");
+            for (int i = 0; i < ctx->lastMRTCount; i++) {
+                if (ctx->lastMRTTextures[i] != NULL) {
+                    id<MTLTexture> gBufferTex = (__bridge id<MTLTexture>)ctx->lastMRTTextures[i];
+                    [encoder useResource:gBufferTex usage:MTLResourceUsageRead stages:MTLRenderStageFragment];
+                    metal_debug_log("resume_render_pass: useResource called for MRT[%d]", i);
+                } else {
+                    metal_log_warning("resume_render_pass: MRT[%d] is NULL!", i);
+                }
+            }
+            // Also declare depth buffer if available
+            if (ctx->lastMRTDepthTexture != NULL) {
+                id<MTLTexture> depthTex = (__bridge id<MTLTexture>)ctx->lastMRTDepthTexture;
+                [encoder useResource:depthTex usage:MTLResourceUsageRead stages:MTLRenderStageFragment];
+                metal_debug_log("resume_render_pass: useResource called for depth texture");
+            }
+        } else {
+            metal_log_warning("resume_render_pass: WARNING - lastMRTCount is 0!");
+        }
 
         metal_debug_log("resume_render_pass() - SUCCESS");
         return (vdynamic*)(__bridge_retained void*)encoder;
