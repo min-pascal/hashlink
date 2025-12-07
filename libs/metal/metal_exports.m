@@ -1073,6 +1073,17 @@ HL_PRIM vdynamic* HL_NAME(begin_texture_render_pass)(vdynamic *cmdBuffer, vdynam
         // Set winding order to counter-clockwise (Heaps/OpenGL convention)
         [encoder setFrontFacingWinding:MTLWindingClockwise];
 
+        // CRITICAL: Declare G-Buffer/MRT textures as resources for the lighting pass
+        // This ensures Metal properly synchronizes texture data from the previous G-Buffer pass
+        if (ctx->lastMRTCount > 0) {
+            for (int i = 0; i < ctx->lastMRTCount && i < 8; i++) {
+                if (ctx->lastMRTTextures[i] != NULL) {
+                    id<MTLTexture> gBufferTex = (__bridge id<MTLTexture>)ctx->lastMRTTextures[i];
+                    [encoder useResource:gBufferTex usage:MTLResourceUsageRead stages:MTLRenderStageFragment];
+                }
+            }
+        }
+
         // CRITICAL: Set initial viewport and scissor for depth-only passes
         if (isDepthTexture) {
             MTLViewport viewport = {0, 0, (double)metalTexture.width, (double)metalTexture.height, 0.0, 1.0};
