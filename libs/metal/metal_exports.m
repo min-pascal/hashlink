@@ -1393,6 +1393,32 @@ HL_PRIM void HL_NAME(draw_indexed_primitives)(vdynamic *encoder, int primitiveTy
     }
 }
 
+HL_PRIM void HL_NAME(draw_indexed_primitives_instanced)(vdynamic *encoder, int primitiveType, int indexCount, vdynamic *indexBuffer, int indexOffset, int instanceCount) {
+    if (encoder == NULL || indexBuffer == NULL || indexCount <= 0 || instanceCount <= 0) return;
+
+    @autoreleasepool {
+        id<MTLRenderCommandEncoder> renderEncoder = (__bridge id<MTLRenderCommandEncoder>)encoder;
+        id<MTLBuffer> metalIndexBuffer = (__bridge id<MTLBuffer>)indexBuffer;
+
+        MTLPrimitiveType metalPrimitiveType = MTLPrimitiveTypeTriangle;
+        switch (primitiveType) {
+            case 0: metalPrimitiveType = MTLPrimitiveTypePoint; break;
+            case 1: metalPrimitiveType = MTLPrimitiveTypeLine; break;
+            case 2: metalPrimitiveType = MTLPrimitiveTypeLineStrip; break;
+            case 3: metalPrimitiveType = MTLPrimitiveTypeTriangle; break;
+            case 4: metalPrimitiveType = MTLPrimitiveTypeTriangleStrip; break;
+        }
+
+        [renderEncoder drawIndexedPrimitives:metalPrimitiveType
+                                  indexCount:indexCount
+                                   indexType:MTLIndexTypeUInt16
+                                 indexBuffer:metalIndexBuffer
+                           indexBufferOffset:indexOffset
+                               instanceCount:instanceCount];
+        metal_debug_log("draw_indexed_primitives_instanced() - SUCCESS (primitiveType=%d, indexCount=%d, indexOffset=%d, instanceCount=%d)", primitiveType, indexCount, indexOffset, instanceCount);
+    }
+}
+
 HL_PRIM void HL_NAME(end_encoding)(vdynamic *encoder) {
     if (encoder == NULL) return;
 
@@ -1595,6 +1621,7 @@ DEFINE_PRIM(_VOID, set_fragment_texture, _DYN _DYN _I32);
 DEFINE_PRIM(_VOID, set_fragment_buffer, _DYN _DYN _I32 _I32);
 DEFINE_PRIM(_VOID, draw_primitives, _DYN _I32 _I32 _I32);
 DEFINE_PRIM(_VOID, draw_indexed_primitives, _DYN _I32 _I32 _DYN _I32);
+DEFINE_PRIM(_VOID, draw_indexed_primitives_instanced, _DYN _I32 _I32 _DYN _I32 _I32);
 DEFINE_PRIM(_VOID, end_encoding, _DYN);
 
 // Logging control - set verbosity level (0=errors, 1=warnings, 2=info, 3=verbose)
