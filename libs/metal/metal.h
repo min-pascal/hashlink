@@ -176,7 +176,13 @@ struct metal_context {
     // Current frame resources
     int currentTargetPixelFormat;     // MTLPixelFormat - current render target format
     int currentMRTCount;              // Number of color attachments for MRT (1 for single target)
+    int currentMRTPixelFormats[8];    // MTLPixelFormat for each MRT attachment (max 8)
     bool hasDepthBuffer;              // Flag indicating if current render pass has depth buffer attached
+
+    // MRT texture tracking for deferred rendering
+    void *lastMRTTextures[8];         // id<MTLTexture>[] - textures written in previous MRT pass
+    int lastMRTCount;                 // Number of MRT textures from previous pass
+    void *lastMRTDepthTexture;        // id<MTLTexture> - depth texture from previous MRT pass
 
     // Frame debugging support fields
     bool frameCaptureTrigger;          // Flag to trigger GPU frame capture

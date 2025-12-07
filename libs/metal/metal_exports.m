@@ -560,10 +560,19 @@ if (isDepthFormat) {
     
     metal_debug_log("create_render_pipeline() - Setting up %d color attachment(s)", mrtCount);
     
-    // Configure all color attachments with the same format (for now)
-    // MRT typically uses same format for all targets in Heaps
+    // CRITICAL FIX: Use per-attachment pixel formats for MRT
+    // Different G-Buffer textures may have different formats (RGBA8, RGBA16F, R32F, etc.)
     for (int i = 0; i < mrtCount; i++) {
-        descriptor.colorAttachments[i].pixelFormat = targetPixelFormat;
+        MTLPixelFormat attachmentFormat;
+        if (mrtCount > 1 && ctx->currentMRTPixelFormats[i] != 0) {
+            // MRT mode: use the specific format for each attachment
+            attachmentFormat = (MTLPixelFormat)ctx->currentMRTPixelFormats[i];
+            metal_debug_log("  MRT attachment %d: format=%d", i, (int)attachmentFormat);
+        } else {
+            // Single target mode: use the common target format
+            attachmentFormat = targetPixelFormat;
+        }
+        descriptor.colorAttachments[i].pixelFormat = attachmentFormat;
         
         // Configure blend state from parameters
         // Disable blending only for (One, Zero) which is opaque rendering
@@ -575,6 +584,13 @@ if (isDepthFormat) {
         descriptor.colorAttachments[i].sourceAlphaBlendFactor = BLEND_FACTORS[blendAlphaSrc];
         descriptor.colorAttachments[i].destinationRGBBlendFactor = BLEND_FACTORS[blendDst];
         descriptor.colorAttachments[i].destinationAlphaBlendFactor = BLEND_FACTORS[blendAlphaDst];
+    }
+    
+    // CRITICAL: Mark unused color attachments as Invalid to handle shader outputs
+    // that exceed the current render target count (e.g., shader writes to [[color(5)]]
+    // but render pass only has 5 targets 0-4)
+    for (int i = mrtCount; i < 8; i++) {
+        descriptor.colorAttachments[i].pixelFormat = MTLPixelFormatInvalid;
     }
 
     metal_debug_log("create_render_pipeline() - Blend: src=%d dst=%d alphaSrc=%d alphaDst=%d op=%d alphaOp=%d enabled=%d",
@@ -736,7 +752,20 @@ HL_PRIM vdynamic* HL_NAME(begin_render_pass)(vdynamic *cmdBuffer, int r, int g, 
 
         // Set pixel format to backbuffer format (BGRA8Unorm)
         ctx->currentTargetPixelFormat = (int)MTLPixelFormatBGRA8Unorm;
-        ctx->currentMRTCount = 1;  // Single render target
+        ctx->currentMRTCount = 0;  // Backbuffer is single target, not MRT
+
+        // CRITICAL: Clear lastMRTCount at the start of a new frame (when clearing backbuffer)
+        // This ensures MRT textures from the previous frame don't leak into the new frame
+        ctx->lastMRTCount = 0;
+        for (int i = 0; i < 8; i++) {
+            if (ctx->lastMRTTextures[i] != NULL) {
+                // Release the retained texture reference
+                id<MTLTexture> tex = (__bridge_transfer id<MTLTexture>)ctx->lastMRTTextures[i];
+                (void)tex; // ARC will release
+                ctx->lastMRTTextures[i] = NULL;
+            }
+        }
+        ctx->lastMRTDepthTexture = NULL;
 
         // Backbuffer rendering always has depth buffer attached
         ctx->hasDepthBuffer = true;
@@ -801,7 +830,7 @@ HL_PRIM vdynamic* HL_NAME(resume_render_pass)(vdynamic *cmdBuffer) {
         
         // CRITICAL: Reset target format and MRT count for backbuffer
         ctx->currentTargetPixelFormat = (int)MTLPixelFormatBGRA8Unorm;
-        ctx->currentMRTCount = 1;
+        ctx->currentMRTCount = 0;  // Backbuffer is single target, not MRT
         ctx->hasDepthBuffer = true;  // Backbuffer has depth buffer
 
         MTLRenderPassDescriptor *renderPassDescriptor = [MTLRenderPassDescriptor renderPassDescriptor];
@@ -858,7 +887,7 @@ HL_PRIM vdynamic* HL_NAME(begin_texture_render_pass)(vdynamic *cmdBuffer, vdynam
 
         // Store texture format and MRT count for pipeline creation
         ctx->currentTargetPixelFormat = (int)pixelFormat;
-        ctx->currentMRTCount = 1;  // Single render target
+        ctx->currentMRTCount = 0;  // Single render target (not MRT)
 
         MTLRenderPassDescriptor *renderPassDescriptor = [MTLRenderPassDescriptor renderPassDescriptor];
 
@@ -976,14 +1005,19 @@ HL_PRIM vdynamic* HL_NAME(begin_mrt_render_pass)(vdynamic *cmdBuffer, varray *te
         vdynamic **texPtrs = hl_aptr(textures, vdynamic*);
         id<MTLTexture> firstTexture = nil;
         
-        // Set up each color attachment
+        // Set up each color attachment and store their pixel formats
+        // CRITICAL: MRT requires per-attachment pixel format tracking for correct pipeline creation
         for (int i = 0; i < texCount; i++) {
             if (texPtrs[i] == NULL) {
+                ctx->currentMRTPixelFormats[i] = (int)MTLPixelFormatBGRA8Unorm; // default
                 continue;
             }
             
             id<MTLTexture> metalTexture = (__bridge id<MTLTexture>)texPtrs[i];
             if (i == 0) firstTexture = metalTexture;
+            
+            // Store the pixel format for this attachment
+            ctx->currentMRTPixelFormats[i] = (int)metalTexture.pixelFormat;
             
             renderPassDescriptor.colorAttachments[i].texture = metalTexture;
             
@@ -1214,6 +1248,13 @@ HL_PRIM void HL_NAME(end_encoding)(vdynamic *encoder) {
 
     @autoreleasepool {
         id<MTLRenderCommandEncoder> renderEncoder = (__bridge_transfer id<MTLRenderCommandEncoder>)encoder;
+        
+        // NOTE: Do NOT clear lastMRTCount here!
+        // MRT textures need to remain available for subsequent passes to read from.
+        // They are only cleared when:
+        // 1. A new MRT pass starts (overwriting the old textures in begin_mrt_render_pass)
+        // 2. At end of frame (in present() or begin_render_pass with clear)
+        
         [renderEncoder endEncoding];
         metal_debug_log("end_encoding() - SUCCESS");
     }
