@@ -879,15 +879,20 @@ HL_PRIM vdynamic* HL_NAME(begin_render_pass)(vdynamic *cmdBuffer, int r, int g, 
 }
 
 HL_PRIM vdynamic* HL_NAME(resume_render_pass)(vdynamic *cmdBuffer) {
+    metal_debug_log("resume_render_pass called");
     if (ctx == NULL || cmdBuffer == NULL) {
         metal_debug_log("ERROR: resume_render_pass() - ctx=%p cmdBuffer=%p", ctx, cmdBuffer);
+        metal_log_error("resume_render_pass: ctx or cmdBuffer is NULL");
         return NULL;
     }
     
     if (ctx->currentDrawable == NULL) {
         metal_debug_log("ERROR: resume_render_pass() - no currentDrawable!");
+        metal_log_error("resume_render_pass: no currentDrawable");
         return NULL;
     }
+    
+    metal_debug_log("resume_render_pass: lastMRTCount=%d", ctx->lastMRTCount);
 
     @autoreleasepool {
         id<MTLCommandBuffer> commandBuffer = (__bridge id<MTLCommandBuffer>)cmdBuffer;
@@ -1098,6 +1103,12 @@ HL_PRIM vdynamic* HL_NAME(begin_mrt_render_pass)(vdynamic *cmdBuffer, varray *te
                 renderPassDescriptor.colorAttachments[i].clearColor = MTLClearColorMake(r/255.0, g/255.0, b/255.0, a/255.0);
             }
             renderPassDescriptor.colorAttachments[i].storeAction = MTLStoreActionStore;
+            
+            metal_debug_log("MRT attachment %d: format=%d (%s)", i, (int)metalTexture.pixelFormat,
+                metalTexture.pixelFormat == MTLPixelFormatRGBA16Float ? "RGBA16F" :
+                metalTexture.pixelFormat == MTLPixelFormatRGBA8Unorm ? "RGBA8" :
+                metalTexture.pixelFormat == MTLPixelFormatR32Float ? "R32F" :
+                metalTexture.pixelFormat == MTLPixelFormatBGRA8Unorm ? "BGRA8" : "other");
         }
         
         // Attach depth buffer if available and matches first texture size
@@ -1252,7 +1263,12 @@ HL_PRIM void HL_NAME(set_fragment_texture)(vdynamic *encoder, vdynamic *texture,
         id<MTLTexture> metalTexture = (__bridge id<MTLTexture>)texture;
 
         [renderEncoder setFragmentTexture:metalTexture atIndex:index];
-        metal_debug_log("set_fragment_texture() - SUCCESS (index=%d)", index);
+        
+        // Enhanced debug: log texture details
+        metal_debug_log("set_fragment_texture() - SUCCESS (index=%d, tex=%p, %lux%lu, format=%d)", 
+            index, metalTexture, 
+            (unsigned long)metalTexture.width, (unsigned long)metalTexture.height,
+            (int)metalTexture.pixelFormat);
     }
 }
 
