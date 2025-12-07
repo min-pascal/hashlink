@@ -277,9 +277,49 @@ HL_PRIM bool HL_NAME(upload_texture_data)(vdynamic *texture, vbyte *data, int wi
 
     @autoreleasepool {
         id<MTLTexture> metalTexture = (__bridge id<MTLTexture>)texture;
-
+        
+        // Calculate bytes per pixel based on actual texture pixel format
+        NSUInteger bytesPerPixel = 4;  // Default to RGBA8
+        MTLPixelFormat pixelFormat = [metalTexture pixelFormat];
+        switch (pixelFormat) {
+            case MTLPixelFormatRGBA8Unorm:
+            case MTLPixelFormatRGBA8Unorm_sRGB:
+            case MTLPixelFormatBGRA8Unorm:
+            case MTLPixelFormatRGB10A2Unorm:
+                bytesPerPixel = 4;
+                break;
+            case MTLPixelFormatRG8Unorm:
+                bytesPerPixel = 2;
+                break;
+            case MTLPixelFormatR8Unorm:
+                bytesPerPixel = 1;
+                break;
+            case MTLPixelFormatRGBA16Float:
+            case MTLPixelFormatRG16Float:
+                bytesPerPixel = 8;
+                break;
+            case MTLPixelFormatRGBA32Float:
+            case MTLPixelFormatRG32Float:
+                bytesPerPixel = 16;
+                break;
+            case MTLPixelFormatR16Float:
+                bytesPerPixel = 2;
+                break;
+            case MTLPixelFormatR32Float:
+                bytesPerPixel = 4;
+                break;
+            case MTLPixelFormatRGB9E5Float:
+                bytesPerPixel = 4;
+                break;
+            case MTLPixelFormatRG11B10Float:
+                bytesPerPixel = 4;
+                break;
+            default:
+                bytesPerPixel = 4;  // Conservative default
+        }
+        
         MTLRegion region = MTLRegionMake2D(0, 0, width, height);
-        NSUInteger bytesPerRow = width * 4; // Assuming RGBA8
+        NSUInteger bytesPerRow = width * bytesPerPixel;
 
         [metalTexture replaceRegion:region
                         mipmapLevel:level
