@@ -120,7 +120,7 @@ jobs:
 
     steps:
     - name: "SCM Checkout"
-      uses: actions/checkout@v5
+      uses: actions/checkout@v6
 
     - name: "Add msbuild to PATH"
       if: matrix.build_system == 'vs2019'
@@ -350,7 +350,7 @@ jobs:
 
 
     - name: "Share: build artifact"
-      uses: actions/upload-artifact@v5
+      uses: actions/upload-artifact@v6
       with:
         name: ${{ matrix.target }}-${{ matrix.build_system }}-${{ matrix.architecture }}
         path: ${{ env.HASHLINK_DISTRIBUTION }}
@@ -361,7 +361,7 @@ jobs:
     steps:
 
     - name: "SCM Checkout"
-      uses: actions/checkout@v5
+      uses: actions/checkout@v6
 
     - name: Install haxe
       uses: krdlab/setup-haxe@v2
@@ -395,10 +395,10 @@ jobs:
     steps:
 
     - name: "SCM Checkout"
-      uses: actions/checkout@v5
+      uses: actions/checkout@v6
 
     - name: "Get: all build artifacts"
-      uses: actions/download-artifact@v6
+      uses: actions/download-artifact@v7
 
     - name: "Delete previous 'latest' release"
       env:
