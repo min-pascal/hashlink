@@ -1412,7 +1412,7 @@ HL_PRIM void HL_NAME(draw_primitives)(vdynamic *encoder, int primitiveType, int 
     }
 }
 
-HL_PRIM void HL_NAME(draw_indexed_primitives)(vdynamic *encoder, int primitiveType, int indexCount, vdynamic *indexBuffer, int indexOffset) {
+HL_PRIM void HL_NAME(draw_indexed_primitives)(vdynamic *encoder, int primitiveType, int indexCount, vdynamic *indexBuffer, int indexOffset, int is32bit) {
     if (encoder == NULL || indexBuffer == NULL || indexCount <= 0) return;
 
     @autoreleasepool {
@@ -1428,16 +1428,17 @@ HL_PRIM void HL_NAME(draw_indexed_primitives)(vdynamic *encoder, int primitiveTy
             case 4: metalPrimitiveType = MTLPrimitiveTypeTriangleStrip; break;
         }
 
+        MTLIndexType indexType = is32bit ? MTLIndexTypeUInt32 : MTLIndexTypeUInt16;
         [renderEncoder drawIndexedPrimitives:metalPrimitiveType
                                   indexCount:indexCount
-                                   indexType:MTLIndexTypeUInt16
+                                   indexType:indexType
                                  indexBuffer:metalIndexBuffer
                            indexBufferOffset:indexOffset];
-        metal_debug_log("draw_indexed_primitives() - SUCCESS (primitiveType=%d, indexCount=%d, indexOffset=%d)", primitiveType, indexCount, indexOffset);
+        metal_debug_log("draw_indexed_primitives() - SUCCESS (primitiveType=%d, indexCount=%d, indexOffset=%d, is32bit=%d)", primitiveType, indexCount, indexOffset, is32bit);
     }
 }
 
-HL_PRIM void HL_NAME(draw_indexed_primitives_instanced)(vdynamic *encoder, int primitiveType, int indexCount, vdynamic *indexBuffer, int indexOffset, int instanceCount) {
+HL_PRIM void HL_NAME(draw_indexed_primitives_instanced)(vdynamic *encoder, int primitiveType, int indexCount, vdynamic *indexBuffer, int indexOffset, int instanceCount, int is32bit) {
     if (encoder == NULL || indexBuffer == NULL || indexCount <= 0 || instanceCount <= 0) return;
 
     @autoreleasepool {
@@ -1453,13 +1454,14 @@ HL_PRIM void HL_NAME(draw_indexed_primitives_instanced)(vdynamic *encoder, int p
             case 4: metalPrimitiveType = MTLPrimitiveTypeTriangleStrip; break;
         }
 
+        MTLIndexType indexType = is32bit ? MTLIndexTypeUInt32 : MTLIndexTypeUInt16;
         [renderEncoder drawIndexedPrimitives:metalPrimitiveType
                                   indexCount:indexCount
-                                   indexType:MTLIndexTypeUInt16
+                                   indexType:indexType
                                  indexBuffer:metalIndexBuffer
                            indexBufferOffset:indexOffset
                                instanceCount:instanceCount];
-        metal_debug_log("draw_indexed_primitives_instanced() - SUCCESS (primitiveType=%d, indexCount=%d, indexOffset=%d, instanceCount=%d)", primitiveType, indexCount, indexOffset, instanceCount);
+        metal_debug_log("draw_indexed_primitives_instanced() - SUCCESS (primitiveType=%d, indexCount=%d, indexOffset=%d, instanceCount=%d, is32bit=%d)", primitiveType, indexCount, indexOffset, instanceCount, is32bit);
     }
 }
 
@@ -1664,8 +1666,8 @@ DEFINE_PRIM(_VOID, set_vertex_buffer, _DYN _DYN _I32 _I32);
 DEFINE_PRIM(_VOID, set_fragment_texture, _DYN _DYN _I32);
 DEFINE_PRIM(_VOID, set_fragment_buffer, _DYN _DYN _I32 _I32);
 DEFINE_PRIM(_VOID, draw_primitives, _DYN _I32 _I32 _I32);
-DEFINE_PRIM(_VOID, draw_indexed_primitives, _DYN _I32 _I32 _DYN _I32);
-DEFINE_PRIM(_VOID, draw_indexed_primitives_instanced, _DYN _I32 _I32 _DYN _I32 _I32);
+DEFINE_PRIM(_VOID, draw_indexed_primitives, _DYN _I32 _I32 _DYN _I32 _I32);
+DEFINE_PRIM(_VOID, draw_indexed_primitives_instanced, _DYN _I32 _I32 _DYN _I32 _I32 _I32);
 DEFINE_PRIM(_VOID, end_encoding, _DYN);
 
 // Logging control - set verbosity level (0=errors, 1=warnings, 2=info, 3=verbose)
