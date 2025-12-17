@@ -207,7 +207,7 @@ HL_PRIM bool HL_NAME(upload_buffer_data)(vdynamic *buffer, vbyte *data, int size
 }
 
 // Texture management - Metal specific (new functions only)
-HL_PRIM vdynamic* HL_NAME(create_texture)(int width, int height, int format, int usage, bool mipmapped, bool isCube) {
+HL_PRIM vdynamic* HL_NAME(create_texture)(int width, int height, int format, int usage, bool mipmapped, bool isCube, int arrayLength) {
     if (ctx == NULL || ctx->device == NULL || width <= 0 || height <= 0) return NULL;
 
     @autoreleasepool {
@@ -218,6 +218,15 @@ if (isCube) {
     descriptor = [MTLTextureDescriptor textureCubeDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
                                                                         size:width
                                                                    mipmapped:mipmapped];
+} else if (arrayLength > 1) {
+    // Texture array
+    descriptor = [[MTLTextureDescriptor alloc] init];
+    descriptor.textureType = MTLTextureType2DArray;
+    descriptor.pixelFormat = MTLPixelFormatRGBA8Unorm;
+    descriptor.width = width;
+    descriptor.height = height;
+    descriptor.arrayLength = arrayLength;
+    descriptor.mipmapLevelCount = mipmapped ? 1 + floor(log2(fmax(width, height))) : 1;
 } else {
     descriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
                                                                       width:width
@@ -1593,7 +1602,7 @@ DEFINE_PRIM(_VOID, wait_until_completed, _DYN);
 DEFINE_PRIM(_DYN, create_buffer, _I32 _I32);
 DEFINE_PRIM(_BOOL, upload_buffer_data, _DYN _BYTES _I32 _I32);
 
-DEFINE_PRIM(_DYN, create_texture, _I32 _I32 _I32 _I32 _BOOL _BOOL);
+DEFINE_PRIM(_DYN, create_texture, _I32 _I32 _I32 _I32 _BOOL _BOOL _I32);
 DEFINE_PRIM(_BOOL, upload_texture_data, _DYN _BYTES _I32 _I32 _I32 _I32);
 DEFINE_PRIM(_BOOL, capture_texture_pixels, _DYN _BYTES _I32 _I32 _I32);
 DEFINE_PRIM(_VOID, generate_mipmaps, _DYN);
