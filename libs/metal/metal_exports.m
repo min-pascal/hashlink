@@ -694,18 +694,22 @@ if (isDepthFormat) {
 if (vertexDesc != NULL && vertexDesc->bytes != NULL) {
     NSString *descStr = [NSString stringWithUTF8String:(const char*)hl_to_utf8(vertexDesc->bytes)];
 
-    // Check if stride is explicitly specified: "attr1:type1,attr2:type2|stride:N"
+    // Check if stride is explicitly specified: "attr1:type1,attr2:type2|stride:N|instride:M"
     int explicitStride = 0;
+    int explicitInstanceStride = 0;
     NSArray *mainParts = [descStr componentsSeparatedByString:@"|"];
     NSString *attributesStr = mainParts[0];
 
     if (mainParts.count > 1) {
-        // Parse optional stride parameter
+        // Parse optional stride parameters
         for (int i = 1; i < mainParts.count; i++) {
             NSString *param = [mainParts[i] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
             if ([param hasPrefix:@"stride:"]) {
                 explicitStride = [[param substringFromIndex:7] intValue];
                 metal_debug_log("Explicit stride specified: %d bytes", explicitStride);
+            } else if ([param hasPrefix:@"instride:"]) {
+                explicitInstanceStride = [[param substringFromIndex:9] intValue];
+                metal_debug_log("Explicit instance stride specified: %d bytes", explicitInstanceStride);
             }
         }
     }
@@ -714,12 +718,25 @@ if (vertexDesc != NULL && vertexDesc->bytes != NULL) {
 
     int currentOffset = 0;
     int attributeIndex = 0;
+    int instanceBufferOffset = 0;  // Track offset for instance buffer attributes
+    int instanceAttrStartIndex = -1;  // First instance attribute index
+    int instanceStepRate = 1;  // Track step rate for instance buffer (divisor)
 
     for (NSString *attr in attributes) {
         NSArray *parts = [attr componentsSeparatedByString:@":"];
-        if (parts.count == 2) {
-            // Name is parts[0], type is parts[1]
+        if (parts.count >= 2) {
+            // Format: name:type or name:type:bufferIndex or name:type:bufferIndex:divisor
+            __unused NSString *name = [parts[0] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
             NSString *type = [parts[1] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+            int bufferIndex = 0;  // Default to buffer 0
+            int divisor = 1;  // Default divisor
+            if (parts.count >= 3) {
+                bufferIndex = [[parts[2] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]] intValue];
+            }
+            if (parts.count >= 4) {
+                divisor = [[parts[3] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]] intValue];
+                if (divisor > 0) instanceStepRate = divisor;
+            }
 
             MTLVertexFormat format;
             int size = 0;
@@ -745,23 +762,41 @@ if (vertexDesc != NULL && vertexDesc->bytes != NULL) {
             }
 
             vertexDescriptor.attributes[attributeIndex].format = format;
-            vertexDescriptor.attributes[attributeIndex].offset = currentOffset;
-            vertexDescriptor.attributes[attributeIndex].bufferIndex = 0;
+            if (bufferIndex == 0) {
+                vertexDescriptor.attributes[attributeIndex].offset = currentOffset;
+                vertexDescriptor.attributes[attributeIndex].bufferIndex = 0;
+                currentOffset += size;
+            } else {
+                // Instance buffer attribute
+                if (instanceAttrStartIndex < 0) instanceAttrStartIndex = attributeIndex;
+                vertexDescriptor.attributes[attributeIndex].offset = instanceBufferOffset;
+                vertexDescriptor.attributes[attributeIndex].bufferIndex = bufferIndex;
+                instanceBufferOffset += size;
+            }
 
-            metal_debug_log("Vertex attribute %d: %s (%s) at offset %d",
-                          attributeIndex, [name UTF8String], [type UTF8String], currentOffset);
+            metal_debug_log("Vertex attribute %d: %s (%s) at offset %d in buffer %d",
+                          attributeIndex, [name UTF8String], [type UTF8String], 
+                          (bufferIndex == 0) ? (currentOffset - size) : (instanceBufferOffset - size),
+                          bufferIndex);
 
-            currentOffset += size;
             attributeIndex++;
         }
     }
 
-    // Set vertex buffer layout
-    // Use explicit stride if provided, otherwise use calculated offset
+    // Set vertex buffer 0 layout (per-vertex data)
     int finalStride = (explicitStride > 0) ? explicitStride : currentOffset;
     vertexDescriptor.layouts[0].stride = finalStride;
     vertexDescriptor.layouts[0].stepRate = 1;
     vertexDescriptor.layouts[0].stepFunction = MTLVertexStepFunctionPerVertex;
+    
+    // Set vertex buffer 1 layout for instance data (per-instance stepping)
+    if (instanceBufferOffset > 0 || explicitInstanceStride > 0) {
+        int finalInstanceStride = (explicitInstanceStride > 0) ? explicitInstanceStride : instanceBufferOffset;
+        vertexDescriptor.layouts[1].stride = finalInstanceStride;
+        vertexDescriptor.layouts[1].stepRate = instanceStepRate;
+        vertexDescriptor.layouts[1].stepFunction = MTLVertexStepFunctionPerInstance;
+        metal_debug_log("Instance buffer layout: stride=%d bytes (explicit=%d, calculated=%d), stepRate=%d", finalInstanceStride, explicitInstanceStride, instanceBufferOffset, instanceStepRate);
+    }
 
     metal_debug_log("Vertex descriptor: stride=%d bytes (explicit=%d, calculated=%d), %d attributes",
                   finalStride, explicitStride, currentOffset, attributeIndex);
