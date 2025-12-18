@@ -157,6 +157,10 @@ bool metal_setup_window_context(vdynamic *win) {
         layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
         layer.framebufferOnly = NO; // Changed to NO to support depth buffer
         layer.opaque = YES;
+        
+        // Set magnification filter to nearest for pixel-perfect rendering
+        layer.magnificationFilter = kCAFilterNearest;
+        layer.minificationFilter = kCAFilterNearest;
 
         // Get window size and set layer drawable size
         int width, height;
