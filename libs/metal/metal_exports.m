@@ -537,7 +537,19 @@ HL_PRIM vdynamic* HL_NAME(compile_shader)(vstring *source, int shaderType) {
         }
 
         // Get the main function - Metal shaders should have a main function
-        NSString *functionName = (shaderType == 0) ? @"vertex_main" : @"fragment_main";
+        // shaderType: 0=vertex, 1=fragment, 2=compute
+        NSString *functionName;
+        if (shaderType == 0) {
+            functionName = @"vertex_main";
+        } else if (shaderType == 1) {
+            functionName = @"fragment_main";
+        } else if (shaderType == 2) {
+            functionName = @"compute_main";
+        } else {
+            metal_debug_log("Unknown shader type: %d", shaderType);
+            return NULL;
+        }
+        
         id<MTLFunction> function = [library newFunctionWithName:functionName];
         if (function == NULL) {
             metal_debug_log("Failed to find function %s in shader", [functionName UTF8String]);
@@ -545,6 +557,26 @@ HL_PRIM vdynamic* HL_NAME(compile_shader)(vstring *source, int shaderType) {
         }
 
         return (vdynamic*)(__bridge_retained void*)function;
+    }
+}
+
+// Create compute pipeline state from a compiled function
+HL_PRIM vdynamic* HL_NAME(create_compute_pipeline_from_function)(vdynamic *func) {
+    if (ctx == NULL || ctx->device == NULL || func == NULL) return NULL;
+
+    @autoreleasepool {
+        id<MTLDevice> device = (__bridge id<MTLDevice>)ctx->device;
+        id<MTLFunction> function = (__bridge id<MTLFunction>)func;
+
+        NSError *error = nil;
+        id<MTLComputePipelineState> pipelineState = [device newComputePipelineStateWithFunction:function error:&error];
+        if (!pipelineState) {
+            metal_debug_log("Failed to create compute pipeline state: %s", [[error localizedDescription] UTF8String]);
+            return NULL;
+        }
+
+        metal_debug_log("Created compute pipeline state successfully");
+        return (vdynamic*)(__bridge_retained void*)pipelineState;
     }
 }
 
@@ -1770,13 +1802,14 @@ HL_PRIM bool HL_NAME(dispatch_compute)(vdynamic *cmdBuffer, int x, int y, int z)
             [computeEncoder setBuffer:(__bridge id<MTLBuffer>)buffer offset:0 atIndex:0];
         }
 
-        // Calculate threadgroup size
-        MTLSize gridSize = MTLSizeMake(x, y, z);
-        NSUInteger threadGroupSize = [(__bridge id<MTLComputePipelineState>)pipeline maxTotalThreadsPerThreadgroup];
-        MTLSize threadgroupSize = MTLSizeMake(threadGroupSize, 1, 1);
+        // Dispatch thread groups
+        // x, y, z are thread GROUP counts, not total thread counts
+        // Each group has 8x8x1 threads (from setLayout in shader)
+        MTLSize threadgroupsPerGrid = MTLSizeMake(x, y, z);
+        MTLSize threadsPerThreadgroup = MTLSizeMake(8, 8, 1);
 
-        // Dispatch the compute shader
-        [computeEncoder dispatchThreads:gridSize threadsPerThreadgroup:threadgroupSize];
+        // Dispatch the compute shader using thread groups
+        [computeEncoder dispatchThreadgroups:threadgroupsPerGrid threadsPerThreadgroup:threadsPerThreadgroup];
 
         // End encoding
         [computeEncoder endEncoding];
@@ -1857,4 +1890,5 @@ HL_PRIM vdynamic* HL_NAME(create_compute_pipeline)(vbyte *source, vbyte *functio
     }
 }
 DEFINE_PRIM(_DYN, create_compute_pipeline, _BYTES _BYTES);
+DEFINE_PRIM(_DYN, create_compute_pipeline_from_function, _DYN);
 
