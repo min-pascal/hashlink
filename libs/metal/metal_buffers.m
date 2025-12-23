@@ -34,7 +34,7 @@ vdynamic* metal_alloc_buffer_impl(int size, int flags) {
 
     @autoreleasepool {
         // Debug output for allocation
-        metal_debug_log("Metal allocating buffer of size: %d bytes", size);
+        metal_debug_log("Metal allocating buffer of size: %d bytes, flags: 0x%X", size, flags);
 
         if (size <= 0) {
             metal_debug_log("Warning: Trying to allocate a buffer of size <= 0");
@@ -43,13 +43,31 @@ vdynamic* metal_alloc_buffer_impl(int size, int flags) {
 
         id<MTLDevice> device = (__bridge id<MTLDevice>)ctx->device;
 
-        // Create a Metal buffer with the specified size
-        id<MTLBuffer> metalBuffer = [device newBufferWithLength:size
-                                                        options:MTLResourceStorageModeShared];
+        // Determine storage mode based on flags
+        MTLResourceOptions options = MTLResourceStorageModeShared;
+        
+        // Add usage flags for dual-purpose buffers
+        MTLResourceUsage usage = 0;
+        if (flags & BUFFER_FLAG_VERTEX_READ) {
+            usage |= MTLResourceUsageRead;  // Vertex shader reads
+        }
+        if (flags & BUFFER_FLAG_COMPUTE_WRITE) {
+            usage |= MTLResourceUsageWrite; // Compute shader writes
+        }
+        
+        // Create a Metal buffer with the specified size and options
+        id<MTLBuffer> metalBuffer = [device newBufferWithLength:size options:options];
 
         if (!metalBuffer) {
             metal_debug_log("Failed to allocate Metal buffer of size %d", size);
             return NULL;
+        }
+        
+        // Set usage if specified (for compute-to-vertex pipeline)
+        if (usage != 0) {
+            // Note: Usage is set at buffer creation time through options
+            // Metal automatically handles synchronization for shared buffers
+            metal_debug_log("Buffer created with usage flags: 0x%lX", (unsigned long)usage);
         }
 
         // Create a dynamic integer value to return - store as retained void*

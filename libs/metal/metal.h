@@ -16,6 +16,11 @@
 #define MAX_FRAMES_IN_FLIGHT 3
 #define NUM_INSTANCES 32
 
+// Buffer usage flags (match h3d.Buffer.BufferFlag enum)
+#define BUFFER_FLAG_DYNAMIC      (1 << 0)  // Dynamic buffer content
+#define BUFFER_FLAG_VERTEX_READ  (1 << 1)  // Used as vertex buffer
+#define BUFFER_FLAG_COMPUTE_WRITE (1 << 2) // Written by compute shaders
+
 // Helper macro: Only call didModifyRange for Managed buffers (not Shared)
 #define METAL_NOTIFY_BUFFER_MODIFIED(buffer, offset, size) \
     do { \
