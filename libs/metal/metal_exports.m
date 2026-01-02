@@ -1544,7 +1544,7 @@ HL_PRIM void HL_NAME(set_scissor_rect)(vdynamic *encoder, int x, int y, int widt
     }
 }
 
-HL_PRIM void HL_NAME(set_stencil_state)(vdynamic *encoder, bool depthTest, bool depthWrite,
+HL_PRIM void HL_NAME(set_stencil_state)(vdynamic *encoder, int depthCompareFunc, bool depthWrite,
     int frontFunc, int frontSTfail, int frontDPfail, int frontPass,
     int backFunc, int backSTfail, int backDPfail, int backPass,
     int reference, int readMask, int writeMask) {
@@ -1558,15 +1558,6 @@ HL_PRIM void HL_NAME(set_stencil_state)(vdynamic *encoder, bool depthTest, bool 
         // Create a depth stencil descriptor
         MTLDepthStencilDescriptor *descriptor = [[MTLDepthStencilDescriptor alloc] init];
 
-        // Set depth state
-        if (depthTest) {
-            descriptor.depthCompareFunction = MTLCompareFunctionLess;
-            descriptor.depthWriteEnabled = depthWrite ? YES : NO;
-        } else {
-            descriptor.depthCompareFunction = MTLCompareFunctionAlways;
-            descriptor.depthWriteEnabled = NO;
-        }
-
         // Map Heaps Compare enum to Metal compare function
         // Compare enum: Always=0, Never=1, Equal=2, NotEqual=3, Greater=4, GreaterEqual=5, Less=6, LessEqual=7
         MTLCompareFunction compareFuncs[] = {
@@ -1579,6 +1570,10 @@ HL_PRIM void HL_NAME(set_stencil_state)(vdynamic *encoder, bool depthTest, bool 
             MTLCompareFunctionLess,        // 6: Less
             MTLCompareFunctionLessEqual    // 7: LessEqual
         };
+
+        // Set depth compare function from the parameter
+        descriptor.depthCompareFunction = compareFuncs[depthCompareFunc];
+        descriptor.depthWriteEnabled = depthWrite ? YES : NO;
 
         // Map Heaps StencilOp enum to Metal stencil operation
         // StencilOp enum: Keep=0, Zero=1, Replace=2, Increment=3, IncrementWrap=4, Decrement=5, DecrementWrap=6, Invert=7
@@ -1721,7 +1716,7 @@ DEFINE_PRIM(_VOID, log_event, _STRING _I32 _I32);
 
 DEFINE_PRIM(_VOID, set_viewport, _DYN _F64 _F64 _F64 _F64);
 DEFINE_PRIM(_VOID, set_scissor_rect, _DYN _I32 _I32 _I32 _I32);
-DEFINE_PRIM(_VOID, set_stencil_state, _DYN _BOOL _BOOL _I32 _I32 _I32 _I32 _I32 _I32 _I32 _I32 _I32 _I32 _I32);
+DEFINE_PRIM(_VOID, set_stencil_state, _DYN _I32 _BOOL _I32 _I32 _I32 _I32 _I32 _I32 _I32 _I32 _I32 _I32 _I32);
 
 // Compute shader support - generic dispatch for Heaps API
 // Stores current compute state for dispatch
