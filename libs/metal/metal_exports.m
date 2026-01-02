@@ -1554,63 +1554,84 @@ HL_PRIM void HL_NAME(set_stencil_state)(vdynamic *encoder, int depthCompareFunc,
     @autoreleasepool {
         id<MTLRenderCommandEncoder> renderEncoder = (__bridge id<MTLRenderCommandEncoder>)encoder;
         id<MTLDevice> device = (__bridge id<MTLDevice>)ctx->device;
+        NSMutableDictionary *cache = (__bridge NSMutableDictionary*)ctx->depthStencilStateCache;
 
-        // Create a depth stencil descriptor
-        MTLDepthStencilDescriptor *descriptor = [[MTLDepthStencilDescriptor alloc] init];
+        // Create cache key from all parameters
+        // Format: "depthFunc-depthWrite-frontFunc-frontFail-frontDepthFail-frontPass-backFunc-backFail-backDepthFail-backPass-readMask-writeMask"
+        NSString *cacheKey = [NSString stringWithFormat:@"%d-%d-%d-%d-%d-%d-%d-%d-%d-%d-%d-%d",
+            depthCompareFunc, depthWrite ? 1 : 0,
+            frontFunc, frontSTfail, frontDPfail, frontPass,
+            backFunc, backSTfail, backDPfail, backPass,
+            readMask, writeMask];
 
-        // Map Heaps Compare enum to Metal compare function
-        // Compare enum: Always=0, Never=1, Equal=2, NotEqual=3, Greater=4, GreaterEqual=5, Less=6, LessEqual=7
-        MTLCompareFunction compareFuncs[] = {
-            MTLCompareFunctionAlways,      // 0: Always
-            MTLCompareFunctionNever,       // 1: Never
-            MTLCompareFunctionEqual,       // 2: Equal
-            MTLCompareFunctionNotEqual,    // 3: NotEqual
-            MTLCompareFunctionGreater,     // 4: Greater
-            MTLCompareFunctionGreaterEqual,// 5: GreaterEqual
-            MTLCompareFunctionLess,        // 6: Less
-            MTLCompareFunctionLessEqual    // 7: LessEqual
-        };
+        // Check if state exists in cache
+        id<MTLDepthStencilState> depthStencilState = cache[cacheKey];
+        
+        if (depthStencilState == nil) {
+            // State not cached - create new one
+            MTLDepthStencilDescriptor *descriptor = [[MTLDepthStencilDescriptor alloc] init];
 
-        // Set depth compare function from the parameter
-        descriptor.depthCompareFunction = compareFuncs[depthCompareFunc];
-        descriptor.depthWriteEnabled = depthWrite ? YES : NO;
+            // Map Heaps Compare enum to Metal compare function
+            // Compare enum: Always=0, Never=1, Equal=2, NotEqual=3, Greater=4, GreaterEqual=5, Less=6, LessEqual=7
+            MTLCompareFunction compareFuncs[] = {
+                MTLCompareFunctionAlways,      // 0: Always
+                MTLCompareFunctionNever,       // 1: Never
+                MTLCompareFunctionEqual,       // 2: Equal
+                MTLCompareFunctionNotEqual,    // 3: NotEqual
+                MTLCompareFunctionGreater,     // 4: Greater
+                MTLCompareFunctionGreaterEqual,// 5: GreaterEqual
+                MTLCompareFunctionLess,        // 6: Less
+                MTLCompareFunctionLessEqual    // 7: LessEqual
+            };
 
-        // Map Heaps StencilOp enum to Metal stencil operation
-        // StencilOp enum: Keep=0, Zero=1, Replace=2, Increment=3, IncrementWrap=4, Decrement=5, DecrementWrap=6, Invert=7
-        MTLStencilOperation stencilOps[] = {
-            MTLStencilOperationKeep,           // 0: Keep
-            MTLStencilOperationZero,           // 1: Zero
-            MTLStencilOperationReplace,        // 2: Replace
-            MTLStencilOperationIncrementClamp, // 3: Increment
-            MTLStencilOperationIncrementWrap,  // 4: IncrementWrap
-            MTLStencilOperationDecrementClamp, // 5: Decrement
-            MTLStencilOperationDecrementWrap,  // 6: DecrementWrap
-            MTLStencilOperationInvert          // 7: Invert
-        };
+            // Set depth compare function from the parameter
+            descriptor.depthCompareFunction = compareFuncs[depthCompareFunc];
+            descriptor.depthWriteEnabled = depthWrite ? YES : NO;
 
-        // Front face stencil
-        MTLStencilDescriptor *frontStencil = [[MTLStencilDescriptor alloc] init];
-        frontStencil.stencilCompareFunction = compareFuncs[frontFunc];
-        frontStencil.stencilFailureOperation = stencilOps[frontSTfail];
-        frontStencil.depthFailureOperation = stencilOps[frontDPfail];
-        frontStencil.depthStencilPassOperation = stencilOps[frontPass];
-        frontStencil.readMask = (uint32_t)readMask;
-        frontStencil.writeMask = (uint32_t)writeMask;
-        descriptor.frontFaceStencil = frontStencil;
+            // Map Heaps StencilOp enum to Metal stencil operation
+            // StencilOp enum: Keep=0, Zero=1, Replace=2, Increment=3, IncrementWrap=4, Decrement=5, DecrementWrap=6, Invert=7
+            MTLStencilOperation stencilOps[] = {
+                MTLStencilOperationKeep,           // 0: Keep
+                MTLStencilOperationZero,           // 1: Zero
+                MTLStencilOperationReplace,        // 2: Replace
+                MTLStencilOperationIncrementClamp, // 3: Increment
+                MTLStencilOperationIncrementWrap,  // 4: IncrementWrap
+                MTLStencilOperationDecrementClamp, // 5: Decrement
+                MTLStencilOperationDecrementWrap,  // 6: DecrementWrap
+                MTLStencilOperationInvert          // 7: Invert
+            };
 
-        // Back face stencil
-        MTLStencilDescriptor *backStencil = [[MTLStencilDescriptor alloc] init];
-        backStencil.stencilCompareFunction = compareFuncs[backFunc];
-        backStencil.stencilFailureOperation = stencilOps[backSTfail];
-        backStencil.depthFailureOperation = stencilOps[backDPfail];
-        backStencil.depthStencilPassOperation = stencilOps[backPass];
-        backStencil.readMask = (uint32_t)readMask;
-        backStencil.writeMask = (uint32_t)writeMask;
-        descriptor.backFaceStencil = backStencil;
+            // Front face stencil
+            MTLStencilDescriptor *frontStencil = [[MTLStencilDescriptor alloc] init];
+            frontStencil.stencilCompareFunction = compareFuncs[frontFunc];
+            frontStencil.stencilFailureOperation = stencilOps[frontSTfail];
+            frontStencil.depthFailureOperation = stencilOps[frontDPfail];
+            frontStencil.depthStencilPassOperation = stencilOps[frontPass];
+            frontStencil.readMask = (uint32_t)readMask;
+            frontStencil.writeMask = (uint32_t)writeMask;
+            descriptor.frontFaceStencil = frontStencil;
 
-        // Create the depth stencil state
-        id<MTLDepthStencilState> depthStencilState = [device newDepthStencilStateWithDescriptor:descriptor];
+            // Back face stencil
+            MTLStencilDescriptor *backStencil = [[MTLStencilDescriptor alloc] init];
+            backStencil.stencilCompareFunction = compareFuncs[backFunc];
+            backStencil.stencilFailureOperation = stencilOps[backSTfail];
+            backStencil.depthFailureOperation = stencilOps[backDPfail];
+            backStencil.depthStencilPassOperation = stencilOps[backPass];
+            backStencil.readMask = (uint32_t)readMask;
+            backStencil.writeMask = (uint32_t)writeMask;
+            descriptor.backFaceStencil = backStencil;
 
+            // Create the depth stencil state
+            depthStencilState = [device newDepthStencilStateWithDescriptor:descriptor];
+            
+            // Cache it for future use
+            if (depthStencilState) {
+                cache[cacheKey] = depthStencilState;
+                metal_debug_log("Created and cached new depth-stencil state: %s", [cacheKey UTF8String]);
+            }
+        }
+
+        // Apply the state (cached or newly created)
         if (depthStencilState) {
             [renderEncoder setDepthStencilState:depthStencilState];
             [renderEncoder setStencilReferenceValue:(uint32_t)reference];

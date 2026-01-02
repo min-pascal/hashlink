@@ -195,6 +195,9 @@ struct metal_context {
     bool hasFrameCaptured;             // Flag indicating if a capture has been completed
     void *captureStartTime;            // NSDate* - time when app started for auto-capture timeout
     double autoCaptureTimeoutSecs;     // Timeout for automatic capture triggering
+    
+    // Depth-stencil state cache
+    void *depthStencilStateCache;      // NSMutableDictionary* - cache of depth-stencil states keyed by configuration
 };
 
 // Global context
