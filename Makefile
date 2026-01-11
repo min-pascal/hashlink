@@ -8,7 +8,7 @@ INSTALL_INCLUDE_DIR ?= $(PREFIX)/include
 
 LIBS=fmt sdl ssl openal ui uv mysql sqlite heaps
 ARCH ?= $(shell uname -m)
-BUILD_OUTPUT_DIR ?= build-arm64
+BUILD_OUTPUT_DIR ?= build-x86_64
 
 CFLAGS = -Wall -O3 -I src -std=c11 -D LIBHL_EXPORTS
 LFLAGS = -L. -lhl

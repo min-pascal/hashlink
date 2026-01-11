@@ -1,10 +1,10 @@
 # Makefile for Metal library
 
-BUILD_OUTPUT_DIR ?= ../../build-arm64
+BUILD_OUTPUT_DIR ?= ../../build-x86_64
 
 CFLAGS = -Wall -O3 -I ../../src -std=c99 -fPIC -fobjc-arc
-LIBS = -L$(BUILD_OUTPUT_DIR) -lhl -L/opt/homebrew/lib -lSDL2
-ARCH_FLAGS = -arch arm64
+LIBS = -L$(BUILD_OUTPUT_DIR) -lhl -L/usr/local/lib -lSDL2
+ARCH_FLAGS = -arch x86_64
 
 UNAME := $(shell uname)
 
