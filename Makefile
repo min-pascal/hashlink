@@ -163,10 +163,15 @@ else ifeq ($(UNAME),Darwin)
 # Mac
 LIBEXT=dylib
 
+# Use x86_64 Homebrew (/usr/local) when cross-compiling, otherwise native brew
+ifeq ($(ARCH),x86_64)
+BREW_PREFIX := /usr/local
+else
 BREW_PREFIX := $(shell brew --prefix)
+endif
 # prefixes for keg-only packages
-BREW_OPENAL_PREFIX := $(shell brew --prefix openal-soft)
-BREW_SDL_PREFIX := $(shell brew --prefix sdl2)
+BREW_OPENAL_PREFIX := $(BREW_PREFIX)/opt/openal-soft
+BREW_SDL_PREFIX := $(BREW_PREFIX)/opt/sdl2
 
 CFLAGS += -m$(MARCH) -I include -I $(BREW_PREFIX)/include -I $(BREW_OPENAL_PREFIX)/include -I $(BREW_SDL_PREFIX)/include/SDL2 -Dopenal_soft -DGL_SILENCE_DEPRECATION
 LFLAGS += -Wl,-export_dynamic
