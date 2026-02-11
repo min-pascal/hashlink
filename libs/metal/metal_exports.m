@@ -1041,7 +1041,7 @@ HL_PRIM vdynamic* HL_NAME(resume_render_pass)(vdynamic *cmdBuffer) {
     }
 }
 
-HL_PRIM vdynamic* HL_NAME(begin_texture_render_pass)(vdynamic *cmdBuffer, vdynamic *texture, int r, int g, int b, int a, vdynamic *depthTexParam, int layer, int mipLevel) {
+HL_PRIM vdynamic* HL_NAME(begin_texture_render_pass)(vdynamic *cmdBuffer, vdynamic *texture, int r, int g, int b, int a, vdynamic *depthTexParam, int layer, int mipLevel, int depthAction) {
     if (ctx == NULL || cmdBuffer == NULL || texture == NULL) {
         metal_debug_log("ERROR: begin_texture_render_pass() - invalid parameters");
         return NULL;
@@ -1119,23 +1119,28 @@ HL_PRIM vdynamic* HL_NAME(begin_texture_render_pass)(vdynamic *cmdBuffer, vdynam
                 // Check if depth texture matches target size
                 if (depthTexture.width == metalTexture.width && depthTexture.height == metalTexture.height) {
                     renderPassDescriptor.depthAttachment.texture = depthTexture;
-                if (a < 0) {
-                    renderPassDescriptor.depthAttachment.loadAction = MTLLoadActionLoad;
-                } else {
-                    renderPassDescriptor.depthAttachment.loadAction = MTLLoadActionClear;
-                    renderPassDescriptor.depthAttachment.clearDepth = 1.0;
-                }
-                renderPassDescriptor.depthAttachment.storeAction = MTLStoreActionStore;
+                    // depthAction: 0=Load (preserve), 1=Clear, -1=DontCare
+                    if (depthAction == 0) {
+                        renderPassDescriptor.depthAttachment.loadAction = MTLLoadActionLoad;
+                    } else if (depthAction == 1) {
+                        renderPassDescriptor.depthAttachment.loadAction = MTLLoadActionClear;
+                        renderPassDescriptor.depthAttachment.clearDepth = 1.0;
+                    } else {
+                        renderPassDescriptor.depthAttachment.loadAction = MTLLoadActionDontCare;
+                    }
+                    renderPassDescriptor.depthAttachment.storeAction = MTLStoreActionStore;
 
-                // CRITICAL: Also attach stencil to preserve stencil buffer
-                renderPassDescriptor.stencilAttachment.texture = depthTexture;
-                if (a < 0) {
-                    renderPassDescriptor.stencilAttachment.loadAction = MTLLoadActionLoad;
-                } else {
-                    renderPassDescriptor.stencilAttachment.loadAction = MTLLoadActionClear;
-                    renderPassDescriptor.stencilAttachment.clearStencil = 0;
-                }
-                renderPassDescriptor.stencilAttachment.storeAction = MTLStoreActionStore;
+                    // CRITICAL: Also attach stencil to preserve stencil buffer
+                    renderPassDescriptor.stencilAttachment.texture = depthTexture;
+                    if (depthAction == 0) {
+                        renderPassDescriptor.stencilAttachment.loadAction = MTLLoadActionLoad;
+                    } else if (depthAction == 1) {
+                        renderPassDescriptor.stencilAttachment.loadAction = MTLLoadActionClear;
+                        renderPassDescriptor.stencilAttachment.clearStencil = 0;
+                    } else {
+                        renderPassDescriptor.stencilAttachment.loadAction = MTLLoadActionDontCare;
+                    }
+                    renderPassDescriptor.stencilAttachment.storeAction = MTLStoreActionStore;
                 }
             }
         }
@@ -1704,7 +1709,7 @@ DEFINE_PRIM(_VOID, dispose_pipeline, _DYN);
 DEFINE_PRIM(_DYN, begin_render_pass, _DYN _I32 _I32 _I32 _I32);
 DEFINE_PRIM(_DYN, resume_render_pass, _DYN);
 DEFINE_PRIM(_DYN, begin_mrt_render_pass, _DYN _ARR _I32 _I32 _I32 _I32);
-DEFINE_PRIM(_DYN, begin_texture_render_pass, _DYN _DYN _I32 _I32 _I32 _I32 _DYN _I32 _I32);
+DEFINE_PRIM(_DYN, begin_texture_render_pass, _DYN _DYN _I32 _I32 _I32 _I32 _DYN _I32 _I32 _I32);
 DEFINE_PRIM(_DYN, begin_depth_render_pass, _DYN _DYN _F64);
 DEFINE_PRIM(_VOID, set_render_pipeline_state, _DYN _DYN);
 DEFINE_PRIM(_VOID, set_depth_state, _DYN _BOOL _BOOL);
