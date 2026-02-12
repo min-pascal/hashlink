@@ -516,6 +516,17 @@ HL_PRIM void HL_NAME(set_fragment_samplers)(vdynamic *encoder, varray *samplers)
     }
 }
 
+HL_PRIM void HL_NAME(set_fragment_sampler)(vdynamic *encoder, vdynamic *sampler, int index) {
+    if (encoder == NULL || sampler == NULL) return;
+
+    @autoreleasepool {
+        id<MTLRenderCommandEncoder> renderEncoder = (__bridge id<MTLRenderCommandEncoder>)encoder;
+        id<MTLSamplerState> samplerState = (__bridge id<MTLSamplerState>)sampler;
+        [renderEncoder setFragmentSamplerState:samplerState atIndex:index];
+    }
+}
+DEFINE_PRIM(_VOID, set_fragment_sampler, _DYN _DYN _I32);
+
 // Shader compilation - Metal specific with MSL (new functions only)
 HL_PRIM vdynamic* HL_NAME(compile_shader)(vstring *source, int shaderType) {
     if (ctx == NULL || ctx->device == NULL || source == NULL) return NULL;
@@ -532,7 +543,7 @@ HL_PRIM vdynamic* HL_NAME(compile_shader)(vstring *source, int shaderType) {
         NSError *error = nil;
         id<MTLLibrary> library = [device newLibraryWithSource:shaderSource options:nil error:&error];
         if (library == NULL || error != nil) {
-            metal_debug_log("Shader compilation failed: %s", [error.localizedDescription UTF8String]);
+            metal_log_error("Shader compilation failed: %s", [error.localizedDescription UTF8String]);
             return NULL;
         }
 
