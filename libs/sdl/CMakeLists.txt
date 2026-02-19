@@ -3,7 +3,7 @@ add_library(sdl.hdll
     gl.c
 )
 
-if ((NOT WIN32) AND DOWNLOAD_DEPENDENCIES)
+if (((NOT WIN32) OR (CMAKE_SYSTEM_PROCESSOR MATCHES "ARM64|aarch64")) AND DOWNLOAD_DEPENDENCIES)
     FetchContent_Declare(
         SDL2
         URL https://github.com/libsdl-org/SDL/releases/download/release-2.32.8/SDL2-2.32.8.tar.gz
@@ -22,6 +22,12 @@ if ((NOT WIN32) AND DOWNLOAD_DEPENDENCIES)
         endif()
     endif()
     FetchContent_MakeAvailable(SDL2)
+    if(WIN32 AND NOT MINGW)
+        target_include_directories(sdl.hdll
+            PRIVATE
+            ${INCLUDES_BASE_DIR}/gl
+        )
+    endif()
 else()
     if(WIN32)
         set(SDL2_DIR ${INCLUDES_BASE_DIR}/sdl/cmake)
