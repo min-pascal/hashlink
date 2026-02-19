@@ -40,7 +40,24 @@ STD = src/std/array.o src/std/buffer.o src/std/bytes.o src/std/cast.o src/std/da
 	src/std/socket.o src/std/string.o src/std/sys.o src/std/types.o src/std/ucs2.o src/std/thread.o src/std/process.o \
 	src/std/track.o
 
+# On arm64/aarch64, default to the arm64 JIT; on x86, use the original JIT.
+# You can also explicitly build with: make hl_arm64  or  make hl_x86
+# macOS reports arm64, Linux reports aarch64, Windows MSYS2 reports aarch64
+# Cross-compile: make CROSS_ARM64=1 hl  (forces arm64 JIT on any host)
+IS_ARM64 := $(filter arm64 aarch64,$(ARCH))
+
+# Allow cross-compilation override
+ifdef CROSS_ARM64
+IS_ARM64 := arm64
+endif
+
+ifneq ($(IS_ARM64),)
+HL = src/code.o src/jit_arm64.o src/main.o src/module.o src/debugger.o src/profile.o
+else
 HL = src/code.o src/jit.o src/main.o src/module.o src/debugger.o src/profile.o
+endif
+HL_ARM64 = src/code.o src/jit_arm64.o src/main.o src/module.o src/debugger.o src/profile.o
+HL_X86   = src/code.o src/jit.o src/main.o src/module.o src/debugger.o src/profile.o
 
 FMT_INCLUDE = -I include/mikktspace -I include/minimp3
 
@@ -224,19 +241,12 @@ ifdef DEBUG
 CFLAGS += -g
 endif
 
-all: libhl libs
-ifeq ($(ARCH),arm64)
-	$(warning HashLink vm is not supported on arm64, skipping)
-else
-all: hl
-endif
+all: libhl libs hl
 
 install:
 	$(UNAME)==Darwin && ${MAKE} uninstall
-ifneq ($(ARCH),arm64)
 	mkdir -p $(INSTALL_BIN_DIR)
 	cp hl $(INSTALL_BIN_DIR)
-endif
 	mkdir -p $(INSTALL_LIB_DIR)
 	cp *.hdll $(INSTALL_LIB_DIR)
 	cp libhl.${LIBEXT} $(INSTALL_LIB_DIR)
@@ -263,6 +273,14 @@ hlc: ${BOOT}
 
 hl: ${HL} libhl
 	${CC} ${CFLAGS} -o hl ${HL} ${LFLAGS} ${EXTRA_LFLAGS} ${HLFLAGS}
+
+# Explicit arm64 JIT build (works on any arm64 machine)
+hl_arm64: ${HL_ARM64} libhl
+	${CC} ${CFLAGS} -o hl ${HL_ARM64} ${LFLAGS} ${EXTRA_LFLAGS} ${HLFLAGS}
+
+# Explicit x86 JIT build
+hl_x86: ${HL_X86} libhl
+	${CC} ${CFLAGS} -o hl ${HL_X86} ${LFLAGS} ${EXTRA_LFLAGS} ${HLFLAGS}
 
 libs/fmt/%.o: libs/fmt/%.c
 	${CC} ${CFLAGS} -o $@ -c $< ${FMT_INCLUDE}
@@ -367,11 +385,7 @@ release_win:
 	rm -rf $(PACKAGE_NAME)
 
 release_linux release_osx:
-ifeq ($(ARCH),arm64)
-	cp libhl.$(LIBEXT) *.hdll $(PACKAGE_NAME)
-else
 	cp hl libhl.$(LIBEXT) *.hdll $(PACKAGE_NAME)
-endif
 	tar -cvzf $(PACKAGE_NAME).tar.gz $(PACKAGE_NAME)
 	rm -rf $(PACKAGE_NAME)
 
@@ -390,9 +404,9 @@ codesign_osx:
 	${CC} ${CFLAGS} -o $@ -c $<
 
 clean_o:
-	rm -f ${STD} ${BOOT} ${RUNTIME} ${PCRE} ${HL} ${FMT} ${SDL} ${SSL} ${OPENAL} ${UI} ${UV} ${MYSQL} ${SQLITE} ${HEAPS} ${HL_DEBUG}
+	rm -f ${STD} ${BOOT} ${RUNTIME} ${PCRE} ${HL} ${HL_ARM64} ${HL_X86} ${FMT} ${SDL} ${SSL} ${OPENAL} ${UI} ${UV} ${MYSQL} ${SQLITE} ${HEAPS} ${HL_DEBUG}
 
 clean: clean_o
 	rm -f hl hl.exe libhl.$(LIBEXT) *.hdll
 
-.PHONY: libhl hl hlc fmt sdl libs release
+.PHONY: libhl hl hl_arm64 hl_x86 hlc fmt sdl libs release
