@@ -20,8 +20,13 @@ include(FindPkgConfig)
 include(CTest)
 
 set(WITH_VM_DEFAULT ON)
-if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm|aarch64" AND (NOT CMAKE_OSX_ARCHITECTURES MATCHES "x86_64"))
-    set(WITH_VM_DEFAULT OFF)
+
+# Detect ARM64 architecture
+set(HL_IS_ARM64 OFF)
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64|ARM64")
+    if(NOT CMAKE_OSX_ARCHITECTURES MATCHES "x86_64")
+        set(HL_IS_ARM64 ON)
+    endif()
 endif()
 
 option(WITH_VM "Whether to build the Hashlink virtual machine" ${WITH_VM_DEFAULT})
@@ -199,9 +204,16 @@ set_target_properties(libhl
 )
 
 if (WITH_VM)
+    # Select JIT source based on architecture
+    if(HL_IS_ARM64)
+        set(HL_JIT_SOURCE src/jit_arm64.c)
+    else()
+        set(HL_JIT_SOURCE src/jit.c)
+    endif()
+
     add_executable(hl
         src/code.c
-        src/jit.c
+        ${HL_JIT_SOURCE}
         src/main.c
         src/module.c
         src/debugger.c
