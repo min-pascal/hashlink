@@ -280,6 +280,19 @@ HL_API bool hl_debug_resume( int pid, int thread ) {
 }
 
 #ifdef HL_WIN
+#if defined(_M_ARM64) || defined(__aarch64__)
+/* ARM64: CONTEXT has Sp, Fp (X29), Pc, X0-X28, Cpsr, no debug registers accessible this way */
+static DWORD64 *GetContextReg( CONTEXT *c, int reg ) {
+	switch( reg ) {
+	case 0: return &c->Sp;
+	case 1: return &c->Fp;
+	case 2: return &c->Pc;
+	case 10: return &c->X0;
+	default: return &c->X0;
+	}
+}
+#define REGDATA DWORD64
+#else
 #define DefineGetReg(type,GetFun) \
 	REGDATA *GetFun( type *c, int reg ) { \
 		switch( reg ) { \
@@ -309,11 +322,26 @@ DefineGetReg(WOW64_CONTEXT,GetContextReg32);
 #	endif
 
 DefineGetReg(CONTEXT,GetContextReg);
+#endif /* ARM64 vs x86 */
 
 #endif
 
 HL_API void *hl_debug_read_register( int pid, int thread, int reg, bool is64 ) {
 #	if defined(HL_WIN)
+#	if defined(_M_ARM64) || defined(__aarch64__)
+	if( !is64 ) return NULL;
+	{
+		CONTEXT c;
+		c.ContextFlags = CONTEXT_FULL;
+		if( !GetThreadContext(OpenTID(thread),&c) )
+			return NULL;
+		if( reg == 3 )
+			return (void*)(int_val)c.Cpsr;
+		if( reg == 11 )
+			return NULL; /* no XMM on ARM64 - NEON registers accessed differently */
+		return (void*)*GetContextReg(&c,reg);
+	}
+#	else
 #	ifdef HL_64
 	if( !is64 ) {
 		WOW64_CONTEXT c;
@@ -342,6 +370,7 @@ HL_API void *hl_debug_read_register( int pid, int thread, int reg, bool is64 ) {
 		return (void*)*(int_val*)&c.ExtendedRegisters[10*16];
 #endif
 	return (void*)*GetContextReg(&c,reg);
+#	endif /* ARM64 vs x86 */
 #	elif defined(MAC_DEBUG)
 	return mdbg_read_register(pid, thread, get_reg(reg), is64);
 #	elif defined(USE_PTRACE)
@@ -361,6 +390,22 @@ HL_API void *hl_debug_read_register( int pid, int thread, int reg, bool is64 ) {
 
 HL_API bool hl_debug_write_register( int pid, int thread, int reg, void *value, bool is64 ) {
 #	if defined(HL_WIN)
+#	if defined(_M_ARM64) || defined(__aarch64__)
+	if( !is64 ) return false;
+	{
+		CONTEXT c;
+		c.ContextFlags = CONTEXT_FULL;
+		if( !GetThreadContext(OpenTID(thread),&c) )
+			return false;
+		if( reg == 3 )
+			c.Cpsr = (DWORD)(int_val)value;
+		else if( reg == 11 )
+			return false; /* no XMM on ARM64 */
+		else
+			*GetContextReg(&c,reg) = (DWORD64)(int_val)value;
+		return (bool)SetThreadContext(OpenTID(thread),&c);
+	}
+#	else
 #	ifdef HL_64
 	if( !is64 ) {
 		WOW64_CONTEXT c;
@@ -393,6 +438,7 @@ HL_API bool hl_debug_write_register( int pid, int thread, int reg, void *value, 
 	else
 		*GetContextReg(&c,reg) = (REGDATA)value;
 	return (bool)SetThreadContext(OpenTID(thread),&c);
+#	endif /* ARM64 vs x86 */
 #	elif defined(MAC_DEBUG)
 	return mdbg_write_register(pid, thread, get_reg(reg), value, is64);
 #	elif defined(USE_PTRACE)
