@@ -226,7 +226,13 @@ static void sentinel_loop( vsentinel *s ) {
 				SuspendThread(h);
 				GetThreadContext(h,&regs);
 				// simulate a call
-#				ifdef HL_64
+#				if defined(_M_ARM64) || defined(__aarch64__)
+				int_val* sp = (int_val*)regs.Sp;
+				*--sp = (int_val)regs.Pc;
+				*--sp = (int_val)sp;
+				regs.Sp = (int_val)sp;
+				regs.Pc = (int_val)s->callback;
+#				elif defined(HL_64)
 				int_val* rsp = (int_val*)regs.Rsp;
 				*--rsp = (int_val)regs.Rip;
 				*--rsp = (int_val)rsp;
