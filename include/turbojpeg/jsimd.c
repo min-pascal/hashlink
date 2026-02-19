@@ -1,6 +1,6 @@
 // detect automatically CPU type
 #include <hl.h>
-#ifdef __ANDROID__
+#if defined(__ANDROID__) || defined(__aarch64__) || defined(_M_ARM64)
 #	include "jsimd_none.c"
 #elif defined(HL_64)
 #	include "x64/jsimd_x86_64.c"

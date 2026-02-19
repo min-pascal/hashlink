@@ -161,7 +161,7 @@ end:
     return g_have_simd - 1;
 #endif /* MINIMP3_ONLY_SIMD */
 }
-#elif defined(__ARM_NEON) || defined(__aarch64__)
+#elif defined(__ARM_NEON) || defined(__aarch64__) || defined(_M_ARM64)
 #include <arm_neon.h>
 #define HAVE_SIMD 1
 #define VSTORE vst1q_f32
@@ -1505,7 +1505,7 @@ static void mp3d_synth(float *xl, mp3d_sample_t *dstl, int nch, float *lins)
 
 #else /* MINIMP3_FLOAT_OUTPUT */
 
-            static const f4 g_scale = { 1.0f/32768.0f, 1.0f/32768.0f, 1.0f/32768.0f, 1.0f/32768.0f };
+            f4 g_scale = VSET(1.0f/32768.0f);
             a = VMUL(a, g_scale);
             b = VMUL(b, g_scale);
 #if HAVE_SSE
@@ -1754,7 +1754,7 @@ void mp3dec_f32_to_s16(const float *in, int16_t *out, int num_samples)
 
         for(;i < aligned_count;i+=8)
         {
-            static const f4 g_scale = { 32768.0f, 32768.0f, 32768.0f, 32768.0f };
+            f4 g_scale = VSET(32768.0f);
             f4 a = VMUL(VLD(&in[i  ]), g_scale);
             f4 b = VMUL(VLD(&in[i+4]), g_scale);
 #if HAVE_SSE
