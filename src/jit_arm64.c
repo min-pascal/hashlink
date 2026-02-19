@@ -3,13 +3,17 @@
  * ARM64 JIT Implementation for HashLink
  */
 
-#ifdef __aarch64__
+#if defined(__aarch64__) || defined(_M_ARM64)
 
 #include <math.h>
 #include <hlmodule.h>
+#ifndef HL_WIN
 #include <signal.h>
-#include <string.h>
 #include <unistd.h>
+#else
+#include <intrin.h>  /* For __dmb, __isb, FlushInstructionCache etc. on MSVC ARM64 */
+#endif
+#include <string.h>
 
 #if defined(__APPLE__)
 #include <pthread.h>
@@ -20,6 +24,17 @@
 
 /* Debug tracking */
 int g_debug_findex = 0;
+
+/*
+ * Wrapper for setjmp that can be called as a regular function from JIT code.
+ * On many platforms (especially MSVC ARM64), setjmp is a compiler intrinsic/macro
+ * and cannot be taken as a function pointer. This wrapper provides a stable
+ * address for the JIT to call.
+ */
+#include <setjmp.h>
+static int hl_setjmp_wrapper(jmp_buf buf) {
+    return setjmp(buf);
+}
 
 #ifdef JIT_TRACE_REGALLOC
 int g_trace_findex = 0;
@@ -50,6 +65,7 @@ static int lookup_function_by_offset(int offset) {
     return -1;
 }
 
+#ifndef HL_WIN
 void arm64_crash_handler_siginfo(int sig, siginfo_t *info, void *ucontext) {
     /* This handler runs even if another handler is installed after */
     static volatile int handler_called = 0;
@@ -122,6 +138,7 @@ void arm64_crash_handler_siginfo(int sig, siginfo_t *info, void *ucontext) {
     signal(sig, SIG_DFL);
     raise(sig);
 }
+#endif /* !HL_WIN */
 
 /* Extern declarations for native functions we want to debug */
 extern varray* hl_type_enum_values(hl_type *t);
@@ -5652,7 +5669,7 @@ int hl_jit_function(jit_ctx *ctx, hl_module *m, hl_function *f) {
                  * treats reg 31 as XZR not SP. Use ADD instead.
                  */
                 ARM64_ADD_IMM_X(X0, SP, 0);
-                call_native(ctx, setjmp, 0);
+                call_native(ctx, hl_setjmp_wrapper, 0);
                 /* setjmp returns 0 on first call, non-zero when longjmp is called */
 
                 /* 9. Test return value: if X0 == 0, continue normal path */
@@ -6355,7 +6372,11 @@ void hl_jit_patch_method(void *old_fun, void **new_fun_table) {
     code[5] = 0xD61F0120;
     
     /* Clear instruction cache */
+#ifdef HL_WIN
+    FlushInstructionCache(GetCurrentProcess(), code, 6 * sizeof(unsigned int));
+#else
     __builtin___clear_cache((char *)code, (char *)(code + 6));
+#endif
 }
 
 /*
@@ -6421,16 +6442,44 @@ static void *arm64_get_wrapper(hl_type *t) {
 }
 
 /*
- * ARM64 assembly trampoline for calling JIT functions from C.
+ * ARM64 trampoline for calling JIT functions from C.
  *
  * ARM64 ABI uses SEPARATE register banks for integer (X0-X7) and floating-point
  * (D0-D7) arguments. JIT-compiled functions use prepare_call_args() which maps
- * arguments to these separate banks. This trampoline loads both banks from
- * prepared arrays before jumping to the JIT function.
+ * arguments to these separate banks.
  *
- * Input:  X0 = function pointer, X1 = cpu_args[8] pointer, X2 = fpu_args[8] pointer
- * Output: X0 = integer/pointer result, D0 = float/double result
+ * On GCC/Clang: uses naked inline asm to load both register banks from arrays.
+ * On MSVC: uses a C-callable function type with all 8+8 args expanded, relying
+ * on the compiler to place them in X0-X7 and D0-D7 per ARM64 ABI.
  */
+#ifdef HL_WIN
+
+/*
+ * On MSVC ARM64, we can't use inline assembly. Instead, we define a function
+ * pointer type that takes all 8 integer + 8 double args explicitly, then call
+ * through it with args expanded from the arrays. The ARM64 calling convention
+ * guarantees these go into X0-X7 and D0-D7 respectively.
+ */
+typedef uint64_t (*arm64_jit_func_t)(
+    uint64_t, uint64_t, uint64_t, uint64_t,
+    uint64_t, uint64_t, uint64_t, uint64_t,
+    double, double, double, double,
+    double, double, double, double
+);
+
+/* Call JIT function with explicit integer and FPU args for proper register placement */
+static uint64_t arm64_call_jit_c(void *fun, uint64_t *cpu_args, double *fpu_args) {
+    arm64_jit_func_t f = (arm64_jit_func_t)fun;
+    return f(
+        cpu_args[0], cpu_args[1], cpu_args[2], cpu_args[3],
+        cpu_args[4], cpu_args[5], cpu_args[6], cpu_args[7],
+        fpu_args[0], fpu_args[1], fpu_args[2], fpu_args[3],
+        fpu_args[4], fpu_args[5], fpu_args[6], fpu_args[7]
+    );
+}
+
+#else /* GCC/Clang */
+
 __attribute__((naked))
 static void arm64_call_jit_trampoline(void) {
     __asm__ volatile(
@@ -6462,6 +6511,8 @@ static void arm64_call_jit_trampoline(void) {
         "ret\n"
     );
 }
+
+#endif /* HL_WIN */
 
 /*
  * ARM64 callback_c2hl - Implementation for calling JIT functions from C.
@@ -6508,8 +6559,13 @@ static void *callback_c2hl_arm64(void *_f, hl_type *t, void **args, vdynamic *re
 #if defined(__APPLE__) && defined(__aarch64__)
     pthread_jit_write_protect_np(1);
 #endif
+#ifdef HL_WIN
+    __dmb(_ARM64_BARRIER_ISH);
+    __isb(_ARM64_BARRIER_SY);
+#else
     __asm__ volatile("dsb ish" ::: "memory");
     __asm__ volatile("isb" ::: "memory");
+#endif
 
     /* Track for crash handler */
     last_callback_fun = fun;
@@ -6521,8 +6577,13 @@ static void *callback_c2hl_arm64(void *_f, hl_type *t, void **args, vdynamic *re
      *   - Integer/pointer args → X0, X1, X2, ... (cpuIdx)
      *   - Float/double args   → D0, D1, D2, ... (fpuIdx)
      */
+#ifdef HL_WIN
+    __declspec(align(16)) uint64_t cpu_args[8] = {0};
+    __declspec(align(16)) double   fpu_args[8] = {0};
+#else
     uint64_t cpu_args[8] __attribute__((aligned(16))) = {0};
     double   fpu_args[8] __attribute__((aligned(16))) = {0};
+#endif
     int cpuIdx = 0;
     int fpuIdx = 0;
 
@@ -6567,37 +6628,76 @@ static void *callback_c2hl_arm64(void *_f, hl_type *t, void **args, vdynamic *re
         }
     }
 
-    /* Call JIT function through the assembly trampoline which loads both
+    /* Call JIT function through the trampoline which loads both
      * X0-X7 (from cpu_args) and D0-D7 (from fpu_args) before branching.
-     * Cast the trampoline to the appropriate return type so the C compiler
-     * reads the result from the correct register (X0 for int/ptr, D0 for float). */
+     * On MSVC, uses C-callable function with all args expanded.
+     * On GCC/Clang, uses naked asm trampoline. */
     switch (t->fun->ret->kind) {
     case HUI8:
     case HUI16:
     case HI32:
     case HBOOL:
+#ifdef HL_WIN
+        ret->v.i = (int)arm64_call_jit_c(fun, cpu_args, fpu_args);
+#else
         ret->v.i = ((int (*)(void*, uint64_t*, double*))arm64_call_jit_trampoline)(fun, cpu_args, fpu_args);
+#endif
         return &ret->v.i;
 
     case HI64:
+#ifdef HL_WIN
+        ret->v.i64 = (int64_t)arm64_call_jit_c(fun, cpu_args, fpu_args);
+#else
         ret->v.i64 = ((int64_t (*)(void*, uint64_t*, double*))arm64_call_jit_trampoline)(fun, cpu_args, fpu_args);
+#endif
         return &ret->v.i64;
 
-    case HF64:
+    case HF64: {
+#ifdef HL_WIN
+        /* For float returns, we need the result from D0 - cast function to double-returning */
+        typedef double (*jit_func_d_t)(uint64_t, uint64_t, uint64_t, uint64_t,
+            uint64_t, uint64_t, uint64_t, uint64_t,
+            double, double, double, double, double, double, double, double);
+        jit_func_d_t fd = (jit_func_d_t)fun;
+        ret->v.d = fd(cpu_args[0], cpu_args[1], cpu_args[2], cpu_args[3],
+            cpu_args[4], cpu_args[5], cpu_args[6], cpu_args[7],
+            fpu_args[0], fpu_args[1], fpu_args[2], fpu_args[3],
+            fpu_args[4], fpu_args[5], fpu_args[6], fpu_args[7]);
+#else
         ret->v.d = ((double (*)(void*, uint64_t*, double*))arm64_call_jit_trampoline)(fun, cpu_args, fpu_args);
+#endif
         return &ret->v.d;
-
-    case HF32:
+    }
+    case HF32: {
+#ifdef HL_WIN
+        typedef float (*jit_func_f_t)(uint64_t, uint64_t, uint64_t, uint64_t,
+            uint64_t, uint64_t, uint64_t, uint64_t,
+            double, double, double, double, double, double, double, double);
+        jit_func_f_t ff = (jit_func_f_t)fun;
+        ret->v.f = ff(cpu_args[0], cpu_args[1], cpu_args[2], cpu_args[3],
+            cpu_args[4], cpu_args[5], cpu_args[6], cpu_args[7],
+            fpu_args[0], fpu_args[1], fpu_args[2], fpu_args[3],
+            fpu_args[4], fpu_args[5], fpu_args[6], fpu_args[7]);
+#else
         ret->v.f = ((float (*)(void*, uint64_t*, double*))arm64_call_jit_trampoline)(fun, cpu_args, fpu_args);
+#endif
         return &ret->v.f;
-
+    }
     case HVOID:
+#ifdef HL_WIN
+        arm64_call_jit_c(fun, cpu_args, fpu_args);
+#else
         ((void (*)(void*, uint64_t*, double*))arm64_call_jit_trampoline)(fun, cpu_args, fpu_args);
+#endif
         return NULL;
 
     default:
         /* Pointer/Object return types */
+#ifdef HL_WIN
+        return (void*)(uintptr_t)arm64_call_jit_c(fun, cpu_args, fpu_args);
+#else
         return ((void *(*)(void*, uint64_t*, double*))arm64_call_jit_trampoline)(fun, cpu_args, fpu_args);
+#endif
     }
 }
 
@@ -6746,8 +6846,11 @@ void *hl_jit_code(jit_ctx *ctx, hl_module *m, int *codesize, hl_debug_infos **de
     sys_dcache_flush(code, size);
     pthread_jit_write_protect_np(1);
     sys_icache_invalidate(code, size);
+#elif defined(HL_WIN)
+    /* Windows ARM64: flush instruction cache */
+    FlushInstructionCache(GetCurrentProcess(), code, size);
 #else
-    /* Non-Apple: use __builtin___clear_cache */
+    /* Non-Apple Unix: use __builtin___clear_cache */
     __builtin___clear_cache((char *)code, (char *)code + size);
 #endif
     
@@ -6757,6 +6860,7 @@ void *hl_jit_code(jit_ctx *ctx, hl_module *m, int *codesize, hl_debug_infos **de
         hl_setup.static_call = callback_c2hl_arm64;
         hl_setup.static_call_ref = true;
         hl_setup.get_wrapper = arm64_get_wrapper;  /* Enable dynamic fallback for virtuals */
+#ifndef HL_WIN
         /* Install crash handler for debugging using sigaction with SA_SIGINFO */
         struct sigaction act;
         memset(&act, 0, sizeof(act));
@@ -6766,6 +6870,7 @@ void *hl_jit_code(jit_ctx *ctx, hl_module *m, int *codesize, hl_debug_infos **de
         sigaction(SIGBUS, &act, NULL);
         sigaction(SIGSEGV, &act, NULL);
         sigaction(SIGTRAP, &act, NULL);
+#endif
         setup_done = true;
 #ifdef JIT_DEBUG
         printf("ARM64 JIT: Set hl_setup.static_call = %p\n", (void*)callback_c2hl_arm64);
@@ -6795,7 +6900,11 @@ void *hl_jit_code(jit_ctx *ctx, hl_module *m, int *codesize, hl_debug_infos **de
         
         /* Also write to a file for llvm-objdump */
         char filename[64];
+#ifdef HL_WIN
+        snprintf(filename, sizeof(filename), "jit_dump_%d.bin", dump_count);
+#else
         snprintf(filename, sizeof(filename), "/tmp/jit_dump_%d.bin", dump_count);
+#endif
         FILE *f = fopen(filename, "wb");
         if (f) {
             fwrite(code, 1, BUF_POS(), f);
