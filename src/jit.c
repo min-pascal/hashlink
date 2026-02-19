@@ -26,8 +26,8 @@
 #include <hlmodule.h>
 #include "hlsystem.h"
 
-#ifdef __arm__
-#	error "JIT does not support ARM processors, only x86 and x86-64 are supported, please use HashLink/C native compilation instead"
+#if defined(__arm__) || defined(__aarch64__) || defined(_M_ARM64)
+#	error "jit.c is the x86/x86-64 JIT. For ARM64, compile jit_arm64.c instead."
 #endif
 
 #ifdef HL_DEBUG
