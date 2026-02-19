@@ -32,11 +32,13 @@
 #	include <emscripten/heap.h>
 #endif
 
-#if defined(HL_VCC)
+#if defined(HL_VCC) && (defined(_M_IX86) || defined(_M_X64))
 #define DRAM_PREFETCH(addr) _mm_prefetch(p, 1)
+#elif defined(HL_VCC) && defined(_M_ARM64)
+#define DRAM_PREFETCH(addr) __prefetch(addr)
 #elif defined(HL_CLANG) || defined (HL_GCC)
 #define DRAM_PREFETCH(addr) __builtin_prefetch(addr)
-#elif
+#else
 #define DRAM_PREFETCH(addr)
 #endif
 
