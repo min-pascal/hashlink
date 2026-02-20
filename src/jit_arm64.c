@@ -5729,7 +5729,7 @@ int hl_jit_function(jit_ctx *ctx, hl_module *m, hl_function *f) {
                 ARM64_LDR_X(X1, X19, TINF_OFFSET_TRAP_CURRENT);
 
                 /* 4. Allocate trap context on stack (16-byte aligned) */
-                int aligned_trap_size = (TRAP_SIZE + 15) & ~15;  /* 208 is already aligned */
+                int aligned_trap_size = (TRAP_SIZE + 15) & ~15;
                 ARM64_SUB_IMM_X(SP, SP, aligned_trap_size);
 
                 /* 5. Store prev = old trap_current to new trap */
