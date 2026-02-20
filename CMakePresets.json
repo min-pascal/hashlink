@@ -1,0 +1,172 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 21,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "default",
+      "displayName": "Default (auto-detect)",
+      "description": "Auto-detect architecture and use Ninja",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+      }
+    },
+    {
+      "name": "arm64-macos",
+      "displayName": "ARM64 macOS (Apple Silicon)",
+      "description": "Build for Apple Silicon Macs",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-arm64-macos",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_OSX_ARCHITECTURES": "arm64",
+        "CMAKE_OSX_DEPLOYMENT_TARGET": "14.0",
+        "CMAKE_PREFIX_PATH": "/opt/homebrew;/opt/homebrew/opt/openal-soft",
+        "CMAKE_IGNORE_PREFIX_PATH": "/usr/local",
+        "CMAKE_FIND_FRAMEWORK": "LAST"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Darwin"
+      }
+    },
+    {
+      "name": "x64-macos",
+      "displayName": "x86_64 macOS (Intel)",
+      "description": "Build for Intel Macs (or Rosetta 2)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-x64-macos",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_OSX_ARCHITECTURES": "x86_64",
+        "CMAKE_OSX_DEPLOYMENT_TARGET": "10.13"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Darwin"
+      }
+    },
+    {
+      "name": "arm64-linux",
+      "displayName": "ARM64 Linux (aarch64)",
+      "description": "Build for ARM64 Linux",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-arm64-linux",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    },
+    {
+      "name": "x64-linux",
+      "displayName": "x86_64 Linux",
+      "description": "Build for x86_64 Linux",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-x64-linux",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    },
+    {
+      "name": "arm64-windows",
+      "displayName": "ARM64 Windows",
+      "description": "Cross-compile for Windows ARM64 using Visual Studio",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "ARM64",
+      "binaryDir": "${sourceDir}/build-arm64-windows",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "x64-windows",
+      "displayName": "x86_64 Windows",
+      "description": "Build for x86_64 Windows using Visual Studio",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/build-x64-windows",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "x86-windows",
+      "displayName": "x86 Windows (32-bit)",
+      "description": "Build for 32-bit Windows using Visual Studio",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "Win32",
+      "binaryDir": "${sourceDir}/build-x86-windows",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "default",
+      "configurePreset": "default"
+    },
+    {
+      "name": "arm64-macos",
+      "configurePreset": "arm64-macos"
+    },
+    {
+      "name": "x64-macos",
+      "configurePreset": "x64-macos"
+    },
+    {
+      "name": "arm64-linux",
+      "configurePreset": "arm64-linux"
+    },
+    {
+      "name": "x64-linux",
+      "configurePreset": "x64-linux"
+    },
+    {
+      "name": "arm64-windows",
+      "configurePreset": "arm64-windows",
+      "configuration": "Release"
+    },
+    {
+      "name": "x64-windows",
+      "configurePreset": "x64-windows",
+      "configuration": "Release"
+    },
+    {
+      "name": "x86-windows",
+      "configurePreset": "x86-windows",
+      "configuration": "Release"
+    }
+  ]
+}
