@@ -1151,7 +1151,18 @@ retry_jit_alloc:
 	return NULL;
 #else
 	void *p;
+#if defined(__APPLE__) && defined(__aarch64__)
+	/* Apple Silicon requires MAP_JIT for executable memory */
+	p = mmap(NULL,size,PROT_READ|PROT_WRITE|PROT_EXEC,(MAP_PRIVATE|MAP_ANONYMOUS|MAP_JIT),-1,0);
+	if( p == MAP_FAILED ) {
+		/* Fallback without MAP_JIT for older macOS or Rosetta */
+		p = mmap(NULL,size,PROT_READ|PROT_WRITE|PROT_EXEC,(MAP_PRIVATE|MAP_ANONYMOUS),-1,0);
+	}
+#else
 	p = mmap(NULL,size,PROT_READ|PROT_WRITE|PROT_EXEC,(MAP_PRIVATE|MAP_ANONYMOUS),-1,0);
+#endif
+	if( p == MAP_FAILED )
+		return NULL;
 	return p;
 #endif
 }
