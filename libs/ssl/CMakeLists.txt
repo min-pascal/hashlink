@@ -140,8 +140,16 @@ endif()
 
 set_as_hdll(ssl)
 
+# Prevent CMake from converting include paths from linked IMPORTED targets to
+# -isystem. On macOS, /usr/local/include (which may contain stale old mbedtls
+# headers) is searched before -isystem paths, breaking version detection.
+set_target_properties(ssl.hdll PROPERTIES NO_SYSTEM_FROM_IMPORTED ON)
+
+# Use BEFORE to ensure the mbedtls include path takes priority over any stale
+# system paths (e.g. /usr/local/include with an old mbedtls version).
+# CMake may otherwise merge this with a -isystem path from CMAKE_PREFIX_PATH.
 target_include_directories(ssl.hdll
-    PRIVATE
+    BEFORE PRIVATE
     ${MBEDTLS_INCLUDE_DIRS}
 )
 
