@@ -6829,7 +6829,7 @@ void *hl_jit_code(jit_ctx *ctx, hl_module *m, int *codesize, hl_debug_infos **de
 #endif
     
     code = (unsigned char *)hl_alloc_executable_memory(size);
-    if (code == NULL) {
+    if (code == NULL || code == (unsigned char *)MAP_FAILED) {
         printf("ARM64 JIT: Failed to allocate executable memory!\n");
         return NULL;
     }
