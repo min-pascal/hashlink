@@ -2181,6 +2181,101 @@ Yeah     * Apple ARM64 ABI: stack arguments use natural alignment (4 bytes for i
 }
 
 /* Initialize module for JIT compilation */
+/* Build a JIT helper function, returning its offset in the code buffer */
+static int jit_build(jit_ctx *ctx, void (*fbuild)(jit_ctx *)) {
+    int pos;
+    jit_buf(ctx);
+    pos = BUF_POS();
+    fbuild(ctx);
+    return pos;
+}
+
+#ifdef HL_WIN
+/*
+ * Custom longjmp for Windows ARM64.
+ *
+ * On Windows, longjmp uses RtlUnwindEx which requires proper unwind info
+ * for each frame on the stack. JIT-generated code has no unwind info,
+ * so system longjmp crashes when trying to unwind through JIT frames.
+ *
+ * This custom implementation directly restores registers from the jmp_buf
+ * without doing SEH unwinding, similar to the x86 JIT's JIT_CUSTOM_LONGJUMP.
+ *
+ * Windows ARM64 _JUMP_BUFFER layout:
+ *   offset   0: Frame     (uint64_t)
+ *   offset   8: Reserved  (uint64_t)
+ *   offset  16: X19
+ *   offset  24: X20
+ *   offset  32: X21
+ *   offset  40: X22
+ *   offset  48: X23
+ *   offset  56: X24
+ *   offset  64: X25
+ *   offset  72: X26
+ *   offset  80: X27
+ *   offset  88: X28
+ *   offset  96: Fp  (X29)
+ *   offset 104: Lr  (X30)
+ *   offset 112: Sp
+ *   offset 120: Fpcr (uint32_t)
+ *   offset 124: Fpsr (uint32_t)
+ *   offset 128: D[0] (D8)
+ *   offset 136: D[1] (D9)
+ *   offset 144: D[2] (D10)
+ *   offset 152: D[3] (D11)
+ *   offset 160: D[4] (D12)
+ *   offset 168: D[5] (D13)
+ *   offset 176: D[6] (D14)
+ *   offset 184: D[7] (D15)
+ */
+static void jit_longjump(jit_ctx *ctx) {
+    /* Args: X0 = jmp_buf*, W1 = return value */
+    
+    /* Save buf pointer to X2 (X0 will become return value) */
+    ARM64_MOV_X(X2, X0);
+    
+    /* Ensure return value is non-zero (longjmp spec requires this) */
+    EMIT(0x35000041);  /* CBNZ W1, PC+8 (skip next instruction if W1 != 0) */
+    ARM64_MOVZ_W(X1, 1);  /* W1 = 1 */
+    
+    /* Set return value */
+    ARM64_MOV_W(X0, X1);
+    
+    /* Restore callee-saved FPU registers D8-D15 (before SP changes) */
+    ARM64_LDR_D(V8, X2, 128);
+    ARM64_LDR_D(V9, X2, 136);
+    ARM64_LDR_D(V10, X2, 144);
+    ARM64_LDR_D(V11, X2, 152);
+    ARM64_LDR_D(V12, X2, 160);
+    ARM64_LDR_D(V13, X2, 168);
+    ARM64_LDR_D(V14, X2, 176);
+    ARM64_LDR_D(V15, X2, 184);
+    
+    /* Restore FPCR and FPSR */
+    ARM64_LDR_W(X9, X2, 120);
+    EMIT(0xD51B4409);  /* MSR FPCR, X9 */
+    ARM64_LDR_W(X9, X2, 124);
+    EMIT(0xD51B4429);  /* MSR FPSR, X9 */
+    
+    /* Restore callee-saved GPRs X19-X28 */
+    ARM64_LDP_X(X19, X20, X2, 16);
+    ARM64_LDP_X(X21, X22, X2, 32);
+    ARM64_LDP_X(X23, X24, X2, 48);
+    ARM64_LDP_X(X25, X26, X2, 64);
+    ARM64_LDP_X(X27, X28, X2, 80);
+    
+    /* Restore FP (X29) and LR (X30) */
+    ARM64_LDP_X(X29, X30, X2, 96);
+    
+    /* Restore SP (must use ADD since MOV Xd, Xm treats r31 as XZR) */
+    ARM64_LDR_X(X9, X2, 112);
+    ARM64_ADD_IMM_X(SP, X9, 0);  /* MOV SP, X9 */
+    
+    /* Return to saved LR */
+    ARM64_RET();
+}
+#endif
+
 static void hl_jit_init_module(jit_ctx *ctx, hl_module *m) {
     ctx->m = m;
     
@@ -2193,6 +2288,11 @@ static void hl_jit_init_module(jit_ctx *ctx, hl_module *m) {
                so -1 causes crash when freeing. NULL pointers are safe to free. */
             memset(ctx->debug, 0, sizeof(hl_debug_infos) * m->code->nfunctions);
     }
+    
+#ifdef HL_WIN
+    /* Build custom longjmp to bypass SEH unwinding through JIT frames */
+    ctx->longjump = jit_build(ctx, jit_longjump);
+#endif
     
     /* Float constants will be embedded inline when needed */
 }
@@ -6860,6 +6960,12 @@ void *hl_jit_code(jit_ctx *ctx, hl_module *m, int *codesize, hl_debug_infos **de
         hl_setup.static_call = callback_c2hl_arm64;
         hl_setup.static_call_ref = true;
         hl_setup.get_wrapper = arm64_get_wrapper;  /* Enable dynamic fallback for virtuals */
+#ifdef HL_WIN
+        /* Custom longjmp that bypasses SEH unwinding through JIT frames.
+         * Without this, longjmp calls RtlUnwindEx which crashes because
+         * JIT code has no registered unwind info. */
+        hl_setup.throw_jump = (void(*)(jmp_buf, int))(code + ctx->longjump);
+#endif
 #ifndef HL_WIN
         /* Install crash handler for debugging using sigaction with SA_SIGINFO */
         struct sigaction act;
