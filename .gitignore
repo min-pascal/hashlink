@@ -32,7 +32,7 @@ ReleaseStatic
 /other/benchs/flashout.txt
 
 /bin*
-/build*
+/build*/
 CMakeUserPresets.json
 /other/memory/*.dump
 /src/_std

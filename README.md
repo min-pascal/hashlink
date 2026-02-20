@@ -7,6 +7,40 @@
 
 ### HashLink is a virtual machine for Haxe <https://hashlink.haxe.org>
 
+## ARM64 Support
+
+HashLink natively supports ARM64 (Apple Silicon, Linux aarch64, Windows ARM64) with a dedicated JIT compiler. On ARM64 hosts, the correct JIT is selected automatically by both CMake and Make.
+
+### Quick Build with CMake Presets
+
+The easiest way to build for any platform is with [CMake presets](CMakePresets.json):
+
+```bash
+# Auto-detect architecture (works everywhere)
+cmake --preset default && cmake --build --preset default
+
+# Or pick a specific target:
+cmake --preset arm64-macos && cmake --build --preset arm64-macos   # Apple Silicon
+cmake --preset arm64-linux && cmake --build --preset arm64-linux   # Linux aarch64
+cmake --preset arm64-windows && cmake --build --preset arm64-windows  # Windows ARM64 (VS 2022)
+```
+
+Prerequisites: CMake 3.21+ and Ninja (or Visual Studio 2022 on Windows). Install Ninja via your package manager (`brew install ninja`, `apt install ninja-build`, etc.).
+
+### Quick Build Script
+
+Alternatively, use the provided wrapper scripts:
+
+```bash
+# macOS / Linux
+./build.sh
+
+# Windows (PowerShell)
+.\build.ps1
+```
+
+These auto-detect your architecture and build with sensible defaults.
+
 ## Building on Linux/OSX
 
 HashLink is distributed with some graphics libraries allowing to develop various applications, you can manually disable the libraries you want to compile in Makefile.
@@ -47,7 +81,14 @@ To install hashlink binaries on your system you can then call:
 
 ## Building on Windows
 
-Open `hl.sln` using Visual Studio C++ and compile.
+Open `hl.sln` using Visual Studio C++ and compile (x86/x64 targets).
+
+For **ARM64 Windows**, use CMake instead:
+
+```powershell
+cmake --preset arm64-windows
+cmake --build --preset arm64-windows
+```
 
 To build all of HashLink libraries it is required to download several additional distributions, read each library README file (in hashlink/libs/xxx/README.md) for additional information.
 
