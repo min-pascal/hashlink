@@ -6,10 +6,12 @@
 #if defined(__aarch64__) || defined(_M_ARM64)
 
 #include <math.h>
+#include <stddef.h>
 #include <hlmodule.h>
 #ifndef HL_WIN
 #include <signal.h>
 #include <unistd.h>
+#include <sys/mman.h>
 #else
 #include <intrin.h>  /* For __dmb, __isb, FlushInstructionCache etc. on MSVC ARM64 */
 #endif
@@ -26,15 +28,26 @@
 int g_debug_findex = 0;
 
 /*
- * Wrapper for setjmp that can be called as a regular function from JIT code.
- * On many platforms (especially MSVC ARM64), setjmp is a compiler intrinsic/macro
- * and cannot be taken as a function pointer. This wrapper provides a stable
- * address for the JIT to call.
+ * setjmp handling for OTrap exception support.
+ *
+ * On non-Windows platforms, we call _setjmp directly from JIT code.
+ * This is critical because a wrapper function creates its own stack frame;
+ * setjmp inside the wrapper saves the WRAPPER's FP/SP/LR. After the wrapper
+ * returns, its stack area is reused by subsequent calls. When longjmp fires,
+ * it restores SP into the wrapper's (now-overwritten) frame, and the wrapper's
+ * epilogue loads garbage FP/LR, causing crashes.
+ *
+ * On Windows MSVC ARM64, _setjmp is a compiler intrinsic and cannot be taken
+ * as a function pointer, so we must use a wrapper there. This has the same
+ * fundamental stack corruption issue but is the only option until a JIT-emitted
+ * setjmp is implemented for Windows ARM64.
  */
 #include <setjmp.h>
+#ifdef HL_WIN
 static int hl_setjmp_wrapper(jmp_buf buf) {
     return setjmp(buf);
 }
+#endif
 
 #ifdef JIT_TRACE_REGALLOC
 int g_trace_findex = 0;
@@ -5690,19 +5703,15 @@ int hl_jit_function(jit_ctx *ctx, hl_module *m, hl_function *f) {
                 /*
                  * OTrap implementation using setjmp/longjmp for ARM64.
                  *
-                 * Structure offsets (ARM64 macOS):
-                 *   sizeof(hl_trap_ctx) = 208 bytes
-                 *   trap->buf    at offset 0
-                 *   trap->prev   at offset 192
-                 *   trap->tcheck at offset 200
-                 *   tinf->trap_current at offset 24
-                 *   tinf->exc_value    at offset 48
+                 * Structure offsets are computed at compile time using sizeof/offsetof
+                 * to be correct on all platforms (jmp_buf size varies: 192 on macOS,
+                 * 312 on Linux ARM64).
                  */
-                #define TRAP_SIZE 208
-                #define TRAP_OFFSET_PREV 192
-                #define TRAP_OFFSET_TCHECK 200
-                #define TINF_OFFSET_TRAP_CURRENT 24
-                #define TINF_OFFSET_EXC_VALUE 48
+                #define TRAP_SIZE ((int)sizeof(hl_trap_ctx))
+                #define TRAP_OFFSET_PREV ((int)offsetof(hl_trap_ctx, prev))
+                #define TRAP_OFFSET_TCHECK ((int)offsetof(hl_trap_ctx, tcheck))
+                #define TINF_OFFSET_TRAP_CURRENT ((int)offsetof(hl_thread_info, trap_current))
+                #define TINF_OFFSET_EXC_VALUE ((int)offsetof(hl_thread_info, exc_value))
 
                 int jenter, jtrap;
 
@@ -5767,9 +5776,22 @@ int hl_jit_function(jit_ctx *ctx, hl_module *m, hl_function *f) {
                 /* X0 = address of trap->buf = SP
                  * NOTE: Cannot use MOV X0, SP because ORR (which MOV aliases to)
                  * treats reg 31 as XZR not SP. Use ADD instead.
+                 *
+                 * IMPORTANT: Call _setjmp directly (NOT through hl_setjmp_wrapper).
+                 * A wrapper function creates its own stack frame; setjmp would save
+                 * the wrapper's FP/SP/LR. After the wrapper returns and subsequent
+                 * code runs, the wrapper's stack area is reused. When longjmp later
+                 * restores the wrapper's SP and tries to read its saved FP/LR from
+                 * the stack, those values have been overwritten, causing FP corruption
+                 * and crashes. By calling _setjmp directly from the JIT code, setjmp
+                 * saves the JIT code's own FP/SP/LR, which longjmp correctly restores.
                  */
                 ARM64_ADD_IMM_X(X0, SP, 0);
+#ifdef HL_WIN
                 call_native(ctx, hl_setjmp_wrapper, 0);
+#else
+                call_native(ctx, _setjmp, 0);
+#endif
                 /* setjmp returns 0 on first call, non-zero when longjmp is called */
 
                 /* 9. Test return value: if X0 == 0, continue normal path */
@@ -5828,9 +5850,9 @@ int hl_jit_function(jit_ctx *ctx, hl_module *m, hl_function *f) {
                  * If trap_current is NULL, it means we came through the exception
                  * path which already cleaned up, or there's no trap.
                  */
-                #define TRAP_SIZE 208
-                #define TRAP_OFFSET_PREV 192
-                #define TINF_OFFSET_TRAP_CURRENT 24
+                #define TRAP_SIZE ((int)sizeof(hl_trap_ctx))
+                #define TRAP_OFFSET_PREV ((int)offsetof(hl_trap_ctx, prev))
+                #define TINF_OFFSET_TRAP_CURRENT ((int)offsetof(hl_thread_info, trap_current))
 
                 int jskip;
                 int aligned_trap_size = (TRAP_SIZE + 15) & ~15;
