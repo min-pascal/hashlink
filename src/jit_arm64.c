@@ -6580,7 +6580,7 @@ static uint64_t arm64_call_jit_c(void *fun, uint64_t *cpu_args, double *fpu_args
 
 #else /* GCC/Clang */
 
-__attribute__((naked))
+__attribute__((naked, noinline))
 static void arm64_call_jit_trampoline(void) {
     __asm__ volatile(
         /* Save frame pointer and link register */
