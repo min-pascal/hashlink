@@ -140,7 +140,7 @@ file(GLOB std_srcs
     src/std/process.c
 )
 
-if(CMAKE_SYSTEM_NAME MATCHES "Darwin")
+if(CMAKE_SYSTEM_NAME MATCHES "Darwin" AND NOT HL_IS_ARM64)
     list(APPEND std_srcs
         include/mdbg/mdbg.c
         include/mdbg/mach_excServer.c
