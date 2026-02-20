@@ -33,6 +33,7 @@ ReleaseStatic
 
 /bin*
 /build*
+CMakeUserPresets.json
 /other/memory/*.dump
 /src/_std
 /src/hl
