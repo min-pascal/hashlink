@@ -31,6 +31,12 @@ jobs:
             haxe_nightly_dir: linux64
             archive_ext: tar.gz
 
+          - target: linux
+            architecture: arm64
+            runner: ubuntu-24.04-arm
+            haxe_nightly_dir: linux64
+            archive_ext: tar.gz
+
           - target: darwin
             haxe_nightly_dir: mac
             archive_ext: tar.gz
@@ -98,6 +104,15 @@ jobs:
 
           - target: linux
             architecture: arm64
+            build_system: vs2019
+
+          - target: linux
+            architecture: arm64
+            build_system: cmake-mingw
+
+          - target: linux
+            architecture: arm64
+            build_system: makegcc14
 
           - target: windows
             architecture: arm64
@@ -163,6 +178,20 @@ jobs:
               libuv1-dev \
               libvorbis-dev \
               libsqlite3-dev
+            ;;
+
+          linuxarm64)
+            sudo apt-get update -y
+            sudo apt-get install --no-install-recommends -y \
+              libmbedtls-dev \
+              libopenal-dev \
+              libpng-dev \
+              libsdl2-dev \
+              libturbojpeg-dev \
+              libuv1-dev \
+              libvorbis-dev \
+              libsqlite3-dev \
+              ninja-build
             ;;
 
           darwin*)
@@ -241,6 +270,9 @@ jobs:
                   -DCMAKE_OSX_ARCHITECTURES=arm64 \
                   -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
                   -DFLAT_INSTALL_TREE=ON
+                ;;
+              linuxarm64)
+                cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=${{ matrix.cmake_configuration }}
                 ;;
               linux64)
                 cmake -B build -DCMAKE_BUILD_TYPE=${{ matrix.cmake_configuration }} ;;
@@ -356,6 +388,7 @@ jobs:
           darwin64)   platform_name=darwin ;;
           windows*)  platform_name=win${{matrix.architecture}} ;;
           linux64)   platform_name=linux-amd64 ;;
+          linuxarm64) platform_name=linux-arm64 ;;
         esac
 
         short_commit=$(git rev-parse --short HEAD)
@@ -450,6 +483,7 @@ jobs:
           "darwin-cmake-64/hashlink-${short_commit}-darwin-cmake.tar.gz#hashlink-latest-darwin.tar.gz" \
           "darwin-cmake-arm64/hashlink-${short_commit}-darwin-arm64-cmake.tar.gz#hashlink-latest-darwin-arm64.tar.gz" \
           "linux-make-64/hashlink-${short_commit}-linux-amd64.tar.gz#hashlink-latest-linux-amd64.tar.gz" \
+          "linux-cmake-arm64/hashlink-${short_commit}-linux-arm64-cmake.tar.gz#hashlink-latest-linux-arm64.tar.gz" \
           "windows-vs2019-32/hashlink-${short_commit}-win32.zip#hashlink-latest-win32.zip" \
           "windows-vs2019-64/hashlink-${short_commit}-win64.zip#hashlink-latest-win64.zip" \
           "windows-cmake-mingw-64/hashlink-${short_commit}-win64-cmake-mingw.zip#hashlink-latest-win64-mingw.zip"
