@@ -80,14 +80,20 @@ vdynamic* metal_alloc_buffer_impl(int size, int flags) {
 }
 
 void metal_dispose_buffer_impl(vdynamic *buffer) {
-    if (!buffer || buffer->t != &hlt_i32) return;
+    if (!buffer) return;
 
     @autoreleasepool {
-        // Get the Metal buffer by casting integer back to void* then using __bridge_transfer
-        void* retainedBuffer = (void*)(uintptr_t)buffer->v.i;
-        if (retainedBuffer) {
-            id<MTLBuffer> metalBuffer = (__bridge_transfer id<MTLBuffer>)retainedBuffer;
-            (void)metalBuffer; // Suppress unused variable warning - ARC will handle release
+        if (buffer->t == &hlt_i32) {
+            // Legacy alloc_buffer format: pointer stored as int in vdynamic wrapper
+            void* retainedBuffer = (void*)(uintptr_t)buffer->v.i;
+            if (retainedBuffer) {
+                id<MTLBuffer> metalBuffer = (__bridge_transfer id<MTLBuffer>)retainedBuffer;
+                (void)metalBuffer; // ARC will release
+            }
+        } else {
+            // create_buffer format: raw retained MTLBuffer pointer cast as vdynamic*
+            id<MTLBuffer> metalBuffer = (__bridge_transfer id<MTLBuffer>)buffer;
+            (void)metalBuffer; // ARC will release
         }
     }
 }
