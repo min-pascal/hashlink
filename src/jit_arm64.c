@@ -995,12 +995,15 @@ static void copy_to_stack(jit_ctx *ctx, preg *stack, preg *from, int size) {
     
     /* For negative offsets, use STUR (signed 9-bit offset) or compute address */
     if (offset < 0 && offset >= -256) {
-        /* Use STUR with signed offset */
+        /* Use STUR with signed offset.
+         * Must use correct store width to avoid overwriting adjacent stack slots. */
         if (from->kind == RCPU) {
             if (size == 8)
                 EMIT(0xF8000000 | ((offset & 0x1FF) << 12) | ((FP & 0x1F) << 5) | (from->id & 0x1F)); /* STUR X */
             else if (size == 1)
                 EMIT(0x38000000 | ((offset & 0x1FF) << 12) | ((FP & 0x1F) << 5) | (from->id & 0x1F)); /* STURB */
+            else if (size == 2)
+                EMIT(0x78000000 | ((offset & 0x1FF) << 12) | ((FP & 0x1F) << 5) | (from->id & 0x1F)); /* STURH */
             else
                 EMIT(0xB8000000 | ((offset & 0x1FF) << 12) | ((FP & 0x1F) << 5) | (from->id & 0x1F)); /* STUR W */
         } else if (from->kind == RFPU) {
@@ -1050,6 +1053,8 @@ static void copy_to_stack(jit_ctx *ctx, preg *stack, preg *from, int size) {
                 ARM64_STR_X(from->id, addr_reg, 0);
             else if (size == 1)
                 ARM64_STRB(from->id, addr_reg, 0);
+            else if (size == 2)
+                EMIT(0x79000000 | ((0 & 0xFFF) << 10) | ((addr_reg & 0x1F) << 5) | (from->id & 0x1F)); /* STRH */
             else
                 ARM64_STR_W(from->id, addr_reg, 0);
         } else if (from->kind == RFPU) {
@@ -1071,6 +1076,8 @@ static void copy_to_stack(jit_ctx *ctx, preg *stack, preg *from, int size) {
                 ARM64_STR_X(from->id, FP, offset);
             else if (size == 1)
                 ARM64_STRB(from->id, FP, offset);
+            else if (size == 2)
+                EMIT(0x79000000 | (((offset >> 1) & 0xFFF) << 10) | ((FP & 0x1F) << 5) | (from->id & 0x1F)); /* STRH */
             else
                 ARM64_STR_W(from->id, FP, offset);
         } else if (from->kind == RFPU) {
@@ -1097,12 +1104,15 @@ static void copy_from_stack(jit_ctx *ctx, preg *to, preg *stack, int size) {
     
     /* For negative offsets, use LDUR (signed 9-bit offset) or compute address */
     if (offset < 0 && offset >= -256) {
-        /* Use LDUR with signed offset */
+        /* Use LDUR with signed offset.
+         * Must use correct load width to avoid reading adjacent stack slots. */
         if (to->kind == RCPU) {
             if (size == 8)
                 EMIT(0xF8400000 | ((offset & 0x1FF) << 12) | ((FP & 0x1F) << 5) | (to->id & 0x1F)); /* LDUR X */
             else if (size == 1)
                 EMIT(0x38400000 | ((offset & 0x1FF) << 12) | ((FP & 0x1F) << 5) | (to->id & 0x1F)); /* LDURB */
+            else if (size == 2)
+                EMIT(0x78400000 | ((offset & 0x1FF) << 12) | ((FP & 0x1F) << 5) | (to->id & 0x1F)); /* LDURH */
             else
                 EMIT(0xB8400000 | ((offset & 0x1FF) << 12) | ((FP & 0x1F) << 5) | (to->id & 0x1F)); /* LDUR W */
         } else if (to->kind == RFPU) {
@@ -1143,6 +1153,8 @@ static void copy_from_stack(jit_ctx *ctx, preg *to, preg *stack, int size) {
                 ARM64_LDR_X(to->id, addr_reg, 0);
             else if (size == 1)
                 ARM64_LDRB(to->id, addr_reg, 0);
+            else if (size == 2)
+                EMIT(0x79400000 | ((0 & 0xFFF) << 10) | ((addr_reg & 0x1F) << 5) | (to->id & 0x1F)); /* LDRH */
             else
                 ARM64_LDR_W(to->id, addr_reg, 0);
         } else if (to->kind == RFPU) {
@@ -1164,6 +1176,8 @@ static void copy_from_stack(jit_ctx *ctx, preg *to, preg *stack, int size) {
                 ARM64_LDR_X(to->id, FP, offset);
             else if (size == 1)
                 ARM64_LDRB(to->id, FP, offset);
+            else if (size == 2)
+                EMIT(0x79400000 | (((offset >> 1) & 0xFFF) << 10) | ((FP & 0x1F) << 5) | (to->id & 0x1F)); /* LDRH */
             else
                 ARM64_LDR_W(to->id, FP, offset);
         } else if (to->kind == RFPU) {
@@ -2892,11 +2906,9 @@ int hl_jit_function(jit_ctx *ctx, hl_module *m, hl_function *f) {
             cpuArgCount++;
         }
         if (isReg) {
-            /* Args passed in registers need local storage */
-            /* Use at least 8 bytes for each vreg to ensure unique stack slots */
-            int slot_size = r->size > 0 ? r->size : 8;
-            size += slot_size;
-            size += (size & 7) ? (8 - (size & 7)) : 0; /* 8-byte align */
+            /* Args passed in registers: store in local stack area using natural type size/alignment */
+            size += r->size;
+            size += hl_pad_size(size, r->t);
             r->stackPos = -size;
         } else {
             /* Args on stack already */
@@ -2907,10 +2919,8 @@ int hl_jit_function(jit_ctx *ctx, hl_module *m, hl_function *f) {
     }
     for (i = nargs; i < f->nregs; i++) {
         vreg *r = R(i);
-        /* Use at least 8 bytes for each vreg to ensure unique stack slots */
-        int slot_size = r->size > 0 ? r->size : 8;
-        size += slot_size;
-        size += (size & 7) ? (8 - (size & 7)) : 0;
+        size += r->size;
+        size += hl_pad_size(size, r->t);
         r->stackPos = -size;
     }
     size = (size + 15) & ~15; /* 16-byte align */
@@ -2975,9 +2985,14 @@ int hl_jit_function(jit_ctx *ctx, hl_module *m, hl_function *f) {
                 int regIdx = cpuArgIdx++;
                 if (regIdx >= CALL_NREGS) continue;  /* Too many CPU args */
                 if (offset >= -256) {
-                    /* Use STUR for small negative offsets */
+                    /* Use STUR for small negative offsets.
+                     * Must use correct store width to avoid overwriting adjacent stack slots. */
                     if (r->size == 8)
                         ARM64_STUR_X(CALL_REGS[regIdx], FP, offset);
+                    else if (r->size == 1)
+                        EMIT(0x38000000 | ((offset & 0x1FF) << 12) | ((FP & 0x1F) << 5) | (CALL_REGS[regIdx] & 0x1F)); /* STURB */
+                    else if (r->size == 2)
+                        EMIT(0x78000000 | ((offset & 0x1FF) << 12) | ((FP & 0x1F) << 5) | (CALL_REGS[regIdx] & 0x1F)); /* STURH */
                     else
                         ARM64_STUR_W(CALL_REGS[regIdx], FP, offset);
                 } else {
@@ -2985,6 +3000,10 @@ int hl_jit_function(jit_ctx *ctx, hl_module *m, hl_function *f) {
                     sub_large_imm(ctx, X9, FP, -offset, X10);
                     if (r->size == 8)
                         ARM64_STR_X(CALL_REGS[regIdx], X9, 0);
+                    else if (r->size == 1)
+                        ARM64_STRB(CALL_REGS[regIdx], X9, 0);
+                    else if (r->size == 2)
+                        EMIT(0x79000000 | ((0 & 0xFFF) << 10) | ((X9 & 0x1F) << 5) | (CALL_REGS[regIdx] & 0x1F)); /* STRH */
                     else
                         ARM64_STR_W(CALL_REGS[regIdx], X9, 0);
                 }
