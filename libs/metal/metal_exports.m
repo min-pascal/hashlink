@@ -47,7 +47,7 @@ HL_PRIM bool HL_NAME(commit_command_buffer)(vdynamic *cmdBuffer) {
     }
 
     @autoreleasepool {
-        id<MTLCommandBuffer> commandBuffer = (__bridge id<MTLCommandBuffer>)cmdBuffer;
+        id<MTLCommandBuffer> commandBuffer = (__bridge_transfer id<MTLCommandBuffer>)cmdBuffer;
 
         // Present the drawable if we have one
         if (ctx != NULL && ctx->currentDrawable != NULL) {
@@ -85,8 +85,8 @@ HL_PRIM void HL_NAME(wait_until_completed)(vdynamic *cmdBuffer) {
     if (cmdBuffer == NULL) return;
 
     @autoreleasepool {
-        id<MTLCommandBuffer> commandBuffer = (__bridge id<MTLCommandBuffer>)cmdBuffer;
-        
+        id<MTLCommandBuffer> commandBuffer = (__bridge_transfer id<MTLCommandBuffer>)cmdBuffer;
+
         // Wait synchronously for the command buffer to finish execution
         [commandBuffer waitUntilCompleted];
         
@@ -102,6 +102,15 @@ HL_PRIM bool HL_NAME(commit_without_present)(vdynamic *cmdBuffer) {
 
     @autoreleasepool {
         id<MTLCommandBuffer> commandBuffer = (__bridge id<MTLCommandBuffer>)cmdBuffer;
+        
+        // Release the drawable since we are NOT presenting it.
+        // Without this, drawTo() cycles that acquire a drawable in begin_render_pass
+        // would leak one drawable per frame.
+        if (ctx != NULL && ctx->currentDrawable != NULL) {
+            id<CAMetalDrawable> drawableToRelease = (__bridge_transfer id<CAMetalDrawable>)ctx->currentDrawable;
+            (void)drawableToRelease; // ARC will release
+            ctx->currentDrawable = NULL;
+        }
         
         // Just commit, don't present drawable
         [commandBuffer commit];
