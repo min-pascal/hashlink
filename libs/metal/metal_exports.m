@@ -983,8 +983,7 @@ HL_PRIM vdynamic* HL_NAME(resume_render_pass)(vdynamic *cmdBuffer) {
     }
     
     if (ctx->currentDrawable == NULL) {
-        metal_debug_log("ERROR: resume_render_pass() - no currentDrawable!");
-        metal_log_error("resume_render_pass: no currentDrawable");
+        metal_debug_log("resume_render_pass: no currentDrawable - caller should fall back to begin_render_pass");
         return NULL;
     }
     
