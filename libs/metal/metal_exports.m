@@ -1448,6 +1448,26 @@ HL_PRIM void HL_NAME(set_fragment_buffer)(vdynamic *encoder, vdynamic *buffer, i
     }
 }
 
+// Copy-based variants: data is copied into the command encoder, safe for multi-pass rendering
+// (e.g., cubemap shadow maps where globals change between passes within the same command buffer)
+HL_PRIM void HL_NAME(set_vertex_bytes)(vdynamic *encoder, vbyte *data, int length, int index) {
+    if (encoder == NULL || data == NULL || length <= 0) return;
+
+    @autoreleasepool {
+        id<MTLRenderCommandEncoder> renderEncoder = (__bridge id<MTLRenderCommandEncoder>)encoder;
+        [renderEncoder setVertexBytes:(const void*)data length:length atIndex:index];
+    }
+}
+
+HL_PRIM void HL_NAME(set_fragment_bytes)(vdynamic *encoder, vbyte *data, int length, int index) {
+    if (encoder == NULL || data == NULL || length <= 0) return;
+
+    @autoreleasepool {
+        id<MTLRenderCommandEncoder> renderEncoder = (__bridge id<MTLRenderCommandEncoder>)encoder;
+        [renderEncoder setFragmentBytes:(const void*)data length:length atIndex:index];
+    }
+}
+
 HL_PRIM void HL_NAME(draw_primitives)(vdynamic *encoder, int primitiveType, int vertexStart, int vertexCount) {
     if (encoder == NULL || vertexCount <= 0) return;
 
@@ -1737,6 +1757,8 @@ DEFINE_PRIM(_VOID, set_triangle_fill_mode, _DYN _BOOL);
 DEFINE_PRIM(_VOID, set_vertex_buffer, _DYN _DYN _I32 _I32);
 DEFINE_PRIM(_VOID, set_fragment_texture, _DYN _DYN _I32);
 DEFINE_PRIM(_VOID, set_fragment_buffer, _DYN _DYN _I32 _I32);
+DEFINE_PRIM(_VOID, set_vertex_bytes, _DYN _BYTES _I32 _I32);
+DEFINE_PRIM(_VOID, set_fragment_bytes, _DYN _BYTES _I32 _I32);
 DEFINE_PRIM(_VOID, draw_primitives, _DYN _I32 _I32 _I32);
 DEFINE_PRIM(_VOID, draw_indexed_primitives, _DYN _I32 _I32 _DYN _I32 _I32);
 DEFINE_PRIM(_VOID, draw_indexed_primitives_instanced, _DYN _I32 _I32 _DYN _I32 _I32 _I32);
