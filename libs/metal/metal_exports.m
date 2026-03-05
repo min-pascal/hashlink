@@ -1,6 +1,30 @@
 #include "metal.h"
 
-// Device and command queue - Metal specific API (new functions only)
+// ============================================================================
+// Hashlink exports: DEFINE_PRIM registrations, thin wrappers, and
+// command-buffer management (kept inline because it touches ctx->currentDrawable)
+// ============================================================================
+
+// ============================================================================
+// Context lifecycle wrappers
+// ============================================================================
+
+HL_PRIM void HL_NAME(init)(void) {
+    metal_init_context();
+}
+
+HL_PRIM bool HL_NAME(setup_window)(vdynamic *win) {
+    return metal_setup_window_context(win);
+}
+
+HL_PRIM void HL_NAME(shutdown)(void) {
+    metal_shutdown_context();
+}
+
+// ============================================================================
+// Command-buffer management — full implementations kept here
+// ============================================================================
+
 HL_PRIM vdynamic* HL_NAME(get_device)() {
     if (ctx == NULL) {
         metal_debug_log("ERROR: get_device() - ctx is NULL");
@@ -14,17 +38,6 @@ HL_PRIM vdynamic* HL_NAME(create_command_buffer)() {
     if (ctx == NULL || ctx->commandQueue == NULL) {
         metal_debug_log("ERROR: create_command_buffer() - ctx or commandQueue is NULL");
         return NULL;
-    }
-
-    // Check for frame capture trigger BEFORE creating command buffer
-    // This ensures the capture scope includes the command buffer creation
-    if (ctx->frameCaptureTrigger && !ctx->frameCaptureInProgress) {
-        if (metal_trigger_frame_capture_impl()) {
-            metal_debug_log("Frame capture started - command buffer will be captured");
-        } else {
-            metal_debug_log("Failed to start frame capture");
-            ctx->frameCaptureTrigger = false; // Clear trigger if it failed
-        }
     }
 
     @autoreleasepool {
@@ -64,18 +77,7 @@ HL_PRIM bool HL_NAME(commit_command_buffer)(vdynamic *cmdBuffer) {
             metal_debug_log("WARNING: commit_command_buffer() - no drawable to present");
         }
 
-        // Check if we need to wait for this frame to complete (for GPU capture)
-        if (ctx != NULL && ctx->frameCaptureInProgress && ctx->frameCaptureTrigger) {
-            metal_debug_log("GPU capture active - committing and waiting for frame completion");
-            [commandBuffer commit];
-            [commandBuffer waitUntilCompleted];
-            metal_debug_log("Frame completed - stopping GPU capture now");
-            metal_stop_frame_capture_and_open_impl();
-            ctx->frameCaptureTrigger = false; // Clear the trigger
-        } else {
-            // Normal case - commit without waiting
-            [commandBuffer commit];
-        }
+        [commandBuffer commit];
 
         return true;
     }
@@ -119,1658 +121,14 @@ HL_PRIM bool HL_NAME(commit_without_present)(vdynamic *cmdBuffer) {
     }
 }
 
-// Buffer management - Metal specific with proper memory management (new functions only)
-HL_PRIM vdynamic* HL_NAME(create_buffer)(int size, int usage) {
-    if (ctx == NULL || ctx->device == NULL || size <= 0) {
-        metal_debug_log("ERROR: create_buffer() - invalid parameters (size=%d)", size);
-        return NULL;
-    }
+// ============================================================================
+// Logging control
+// ============================================================================
 
-    @autoreleasepool {
-        id<MTLDevice> device = (__bridge id<MTLDevice>)ctx->device;
-
-        MTLResourceOptions options = MTLResourceStorageModeShared;
-        if (usage & 1) options = MTLResourceStorageModeShared; // Dynamic
-        if (usage & 2) options |= MTLResourceCPUCacheModeWriteCombined; // Uniform
-
-        id<MTLBuffer> buffer = [device newBufferWithLength:size options:options];
-        if (buffer == NULL) {
-            metal_debug_log("ERROR: create_buffer() - failed to create buffer");
-            return NULL;
-        }
-
-        metal_debug_log("create_buffer() - SUCCESS (size=%d, usage=%d)", size, usage);
-        return (vdynamic*)(__bridge_retained void*)buffer;
-    }
-}
-
-HL_PRIM bool HL_NAME(upload_buffer_data)(vdynamic *buffer, vbyte *data, int size, int offset) {
-    if (buffer == NULL || data == NULL || size <= 0) {
-        return false;
-    }
-
-    @autoreleasepool {
-        id<MTLBuffer> metalBuffer = (__bridge id<MTLBuffer>)buffer;
-        
-        if (offset + size > metalBuffer.length) {
-            return false;
-        }
-
-        memcpy((char*)metalBuffer.contents + offset, data, size);
-        
-        // CRITICAL: Only call didModifyRange for Managed buffers
-        // Shared buffers don't need (and don't support) this call
-        MTLResourceOptions storageMode = metalBuffer.resourceOptions & MTLResourceStorageModeMask;
-        if (storageMode == MTLResourceStorageModeManaged) {
-            [metalBuffer didModifyRange:NSMakeRange(offset, size)];
-        }
-        
-        // Log ALL buffer uploads to debug lighting issue
-        metal_debug_log("upload_buffer_data() - size=%d, offset=%d", size, offset);
-
-#ifdef METAL_DEBUG
-        // Verify data after upload for parameter buffers (128 bytes = 8 vec4s)
-        if (size == 128 && offset == 0) {
-            float *floats = (float*)metalBuffer.contents;
-            metal_debug_log("=== NATIVE SIDE: Parameter buffer received (128 bytes) ===");
-            metal_debug_log("vec4[0]: [%.6f, %.6f, %.6f, %.6f]", floats[0], floats[1], floats[2], floats[3]);
-            metal_debug_log("vec4[1]: [%.6f, %.6f, %.6f, %.6f]", floats[4], floats[5], floats[6], floats[7]);
-            metal_debug_log("vec4[2]: [%.6f, %.6f, %.6f, %.6f]", floats[8], floats[9], floats[10], floats[11]);
-            metal_debug_log("vec4[3]: [%.6f, %.6f, %.6f, %.6f]", floats[12], floats[13], floats[14], floats[15]);
-            metal_debug_log("vec4[4]: [%.6f, %.6f, %.6f, %.6f]", floats[16], floats[17], floats[18], floats[19]);
-            metal_debug_log("vec4[5]: [%.6f, %.6f, %.6f, %.6f]", floats[20], floats[21], floats[22], floats[23]);
-            metal_debug_log("vec4[6] (viewportA): [%.6f, %.6f, %.6f, %.6f]", floats[24], floats[25], floats[26], floats[27]);
-            metal_debug_log("vec4[7] (viewportB): [%.6f, %.6f, %.6f, %.6f]", floats[28], floats[29], floats[30], floats[31]);
-            metal_debug_log("=== END NATIVE VERIFICATION ===");
-        }
-        
-        // Verify data after upload for fragment parameter buffers (112 bytes = 7 vec4s)
-        if (size == 112 && offset == 0) {
-            float *floats = (float*)metalBuffer.contents;
-            metal_debug_log("=== NATIVE SIDE: Fragment parameter buffer received (112 bytes) ===");
-            metal_debug_log("vec4[0] (albedo): [%.6f, %.6f, %.6f, %.6f]", floats[0], floats[1], floats[2], floats[3]);
-            metal_debug_log("vec4[1] (metalness): [%.6f, %.6f, %.6f, %.6f]", floats[4], floats[5], floats[6], floats[7]);
-            metal_debug_log("vec4[2] (roughness): [%.6f, %.6f, %.6f, %.6f]", floats[8], floats[9], floats[10], floats[11]);
-            metal_debug_log("vec4[3] (occlusion): [%.6f, %.6f, %.6f, %.6f]", floats[12], floats[13], floats[14], floats[15]);
-            metal_debug_log("vec4[4] (emissive): [%.6f, %.6f, %.6f, %.6f]", floats[16], floats[17], floats[18], floats[19]);
-            metal_debug_log("vec4[5] (custom1): [%.6f, %.6f, %.6f, %.6f]", floats[20], floats[21], floats[22], floats[23]);
-            metal_debug_log("vec4[6] (custom2): [%.6f, %.6f, %.6f, %.6f]", floats[24], floats[25], floats[26], floats[27]);
-            metal_debug_log("=== END FRAGMENT NATIVE VERIFICATION ===");
-        }
-        
-        // Verify data after upload for lighting parameter buffers (80 bytes = 5 vec4s)
-        if (size == 80 && offset == 0) {
-            float *floats = (float*)metalBuffer.contents;
-            metal_debug_log("=== NATIVE SIDE: Lighting parameter buffer received (80 bytes) ===");
-            metal_debug_log("vec4[0]: [%.6f, %.6f, %.6f, %.6f]", floats[0], floats[1], floats[2], floats[3]);
-            metal_debug_log("vec4[1]: [%.6f, %.6f, %.6f, %.6f]", floats[4], floats[5], floats[6], floats[7]);
-            metal_debug_log("vec4[2]: [%.6f, %.6f, %.6f, %.6f]", floats[8], floats[9], floats[10], floats[11]);
-            metal_debug_log("vec4[3]: [%.6f, %.6f, %.6f, %.6f]", floats[12], floats[13], floats[14], floats[15]);
-            metal_debug_log("vec4[4]: [%.6f, %.6f, %.6f, %.6f]", floats[16], floats[17], floats[18], floats[19]);
-            metal_debug_log("=== END LIGHTING NATIVE VERIFICATION ===");
-        }
-#endif // METAL_DEBUG
-        
-        return true;
-    }
-}
-
-// Texture management - Metal specific (new functions only)
-HL_PRIM vdynamic* HL_NAME(create_texture)(int width, int height, int format, int usage, bool mipmapped, bool isCube, int arrayLength) {
-    if (ctx == NULL || ctx->device == NULL || width <= 0 || height <= 0) return NULL;
-
-    @autoreleasepool {
-        id<MTLDevice> device = (__bridge id<MTLDevice>)ctx->device;
-
-MTLTextureDescriptor *descriptor;
-if (isCube) {
-    descriptor = [MTLTextureDescriptor textureCubeDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
-                                                                        size:width
-                                                                   mipmapped:mipmapped];
-} else if (arrayLength > 1) {
-    // Texture array
-    descriptor = [[MTLTextureDescriptor alloc] init];
-    descriptor.textureType = MTLTextureType2DArray;
-    descriptor.pixelFormat = MTLPixelFormatRGBA8Unorm;
-    descriptor.width = width;
-    descriptor.height = height;
-    descriptor.arrayLength = arrayLength;
-    descriptor.mipmapLevelCount = mipmapped ? 1 + floor(log2(fmax(width, height))) : 1;
-} else {
-    descriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
-                                                                      width:width
-                                                                     height:height
-                                                                  mipmapped:mipmapped];
-}
-
-        // Map format parameter to Metal pixel format
-        switch (format) {
-            case 0: descriptor.pixelFormat = MTLPixelFormatRGBA8Unorm; break;
-            case 1: descriptor.pixelFormat = MTLPixelFormatBGRA8Unorm; break;
-            case 2: descriptor.pixelFormat = MTLPixelFormatRGBA8Unorm; break; // RGB8 -> RGBA8
-            case 3: descriptor.pixelFormat = MTLPixelFormatRG8Unorm; break;
-            case 4: descriptor.pixelFormat = MTLPixelFormatR8Unorm; break;
-            case 5: descriptor.pixelFormat = MTLPixelFormatRGBA16Float; break;
-            case 6: descriptor.pixelFormat = MTLPixelFormatRGBA32Float; break;
-            case 7: descriptor.pixelFormat = MTLPixelFormatDepth16Unorm; break;  // Depth16 (legacy)
-            case 8: descriptor.pixelFormat = MTLPixelFormatDepth32Float; break;  // Depth24 -> Depth32Float (Apple Silicon doesn't support Depth24)
-            case 9: descriptor.pixelFormat = MTLPixelFormatDepth32Float; break;  // Depth24Stencil8 -> Depth32Float (Apple Silicon doesn't support Depth24)
-            case 10: descriptor.pixelFormat = MTLPixelFormatDepth32Float; break;  // Depth32 (NEW: depth2d<float>)
-            case 11: descriptor.pixelFormat = MTLPixelFormatR16Float; break;
-            case 12: descriptor.pixelFormat = MTLPixelFormatR32Float; break;
-            case 13: descriptor.pixelFormat = MTLPixelFormatRG16Float; break;
-            case 14: descriptor.pixelFormat = MTLPixelFormatRG32Float; break;
-            case 15: descriptor.pixelFormat = MTLPixelFormatRGBA16Float; break; // RGB16F -> RGBA16F
-            case 16: descriptor.pixelFormat = MTLPixelFormatRGBA32Float; break; // RGB32F -> RGBA32F
-            case 17: descriptor.pixelFormat = MTLPixelFormatRGBA8Unorm_sRGB; break; // SRGB -> RGBA8Unorm_sRGB
-            case 18: descriptor.pixelFormat = MTLPixelFormatRGBA8Unorm_sRGB; break; // SRGB_ALPHA
-            case 19: descriptor.pixelFormat = MTLPixelFormatRGB10A2Unorm; break;
-            case 20: descriptor.pixelFormat = MTLPixelFormatRG11B10Float; break;
-            case 21: descriptor.pixelFormat = MTLPixelFormatR16Unorm; break;
-            case 22: descriptor.pixelFormat = MTLPixelFormatRG16Unorm; break;
-            case 23: descriptor.pixelFormat = MTLPixelFormatRGBA16Unorm; break; // RGB16U -> RGBA16U
-            case 24: descriptor.pixelFormat = MTLPixelFormatRGBA16Unorm; break;
-            default: descriptor.pixelFormat = MTLPixelFormatRGBA8Unorm; break;
-        }
-
-        // Set texture usage
-        MTLTextureUsage textureUsage = MTLTextureUsageShaderRead;
-        if (usage & 2) textureUsage |= MTLTextureUsageRenderTarget;
-        if (usage & 4) textureUsage |= MTLTextureUsageShaderWrite;
-        descriptor.usage = textureUsage;
-
-        id<MTLTexture> texture = [device newTextureWithDescriptor:descriptor];
-        if (texture == NULL) {
-            metal_debug_log("ERROR: create_texture() - failed to create texture");
-            return NULL;
-        }
-
-        metal_debug_log("create_texture() - SUCCESS (width=%d, height=%d, format=%d, usage=%d)", width, height, format, usage);
-        return (vdynamic*)(__bridge_retained void*)texture;
-    }
-}
-
-HL_PRIM bool HL_NAME(upload_texture_data)(vdynamic *texture, vbyte *data, int width, int height, int level, int slice) {
-    if (texture == NULL || data == NULL || width <= 0 || height <= 0) return false;
-
-    @autoreleasepool {
-        id<MTLTexture> metalTexture = (__bridge id<MTLTexture>)texture;
-        
-        // Calculate bytes per pixel based on actual texture pixel format
-        NSUInteger bytesPerPixel = 4;  // Default to RGBA8
-        MTLPixelFormat pixelFormat = [metalTexture pixelFormat];
-        switch (pixelFormat) {
-            case MTLPixelFormatRGBA8Unorm:
-            case MTLPixelFormatRGBA8Unorm_sRGB:
-            case MTLPixelFormatBGRA8Unorm:
-            case MTLPixelFormatRGB10A2Unorm:
-                bytesPerPixel = 4;
-                break;
-            case MTLPixelFormatRG8Unorm:
-                bytesPerPixel = 2;
-                break;
-            case MTLPixelFormatR8Unorm:
-                bytesPerPixel = 1;
-                break;
-            case MTLPixelFormatRGBA16Float:
-            case MTLPixelFormatRG16Float:
-                bytesPerPixel = 8;
-                break;
-            case MTLPixelFormatRGBA32Float:
-            case MTLPixelFormatRG32Float:
-                bytesPerPixel = 16;
-                break;
-            case MTLPixelFormatR16Float:
-                bytesPerPixel = 2;
-                break;
-            case MTLPixelFormatR32Float:
-                bytesPerPixel = 4;
-                break;
-            case MTLPixelFormatRGB9E5Float:
-                bytesPerPixel = 4;
-                break;
-            case MTLPixelFormatRG11B10Float:
-                bytesPerPixel = 4;
-                break;
-            default:
-                bytesPerPixel = 4;  // Conservative default
-        }
-        
-        MTLRegion region = MTLRegionMake2D(0, 0, width, height);
-        NSUInteger bytesPerRow = width * bytesPerPixel;
-
-        [metalTexture replaceRegion:region
-                        mipmapLevel:level
-                              slice:slice
-                          withBytes:data
-                        bytesPerRow:bytesPerRow
-                      bytesPerImage:0];
-
-        return true;
-    }
-}
-
-HL_PRIM bool HL_NAME(capture_texture_pixels)(vdynamic *texture, vbyte *data, int width, int height, int level) {
-    if (texture == NULL || data == NULL || width <= 0 || height <= 0) {
-        metal_debug_log("ERROR: capture_texture_pixels() - invalid parameters");
-        return false;
-    }
-
-    @autoreleasepool {
-        id<MTLTexture> metalTexture = (__bridge id<MTLTexture>)texture;
-        MTLPixelFormat pixelFormat = [metalTexture pixelFormat];
-
-        MTLRegion region = MTLRegionMake2D(0, 0, width, height);
-        // Calculate bytes per row based on actual pixel format
-        NSUInteger bytesPerPixel;
-        switch (pixelFormat) {
-            case MTLPixelFormatR8Unorm:
-                bytesPerPixel = 1;
-                break;
-            case MTLPixelFormatRG8Unorm:
-            case MTLPixelFormatR16Float:
-            case MTLPixelFormatR16Unorm:
-            case MTLPixelFormatDepth16Unorm:
-                bytesPerPixel = 2;
-                break;
-            case MTLPixelFormatRGBA8Unorm:
-            case MTLPixelFormatBGRA8Unorm:
-            case MTLPixelFormatRGBA8Unorm_sRGB:
-            case MTLPixelFormatRGB10A2Unorm:
-            case MTLPixelFormatRG11B10Float:
-            case MTLPixelFormatRG16Float:
-            case MTLPixelFormatRG16Unorm:
-            case MTLPixelFormatR32Float:
-            case MTLPixelFormatDepth24Unorm_Stencil8:
-                bytesPerPixel = 4;
-                break;
-            case MTLPixelFormatRGBA16Float:
-            case MTLPixelFormatRGBA16Unorm:
-            case MTLPixelFormatRG32Float:
-                bytesPerPixel = 8;
-                break;
-            case MTLPixelFormatRGBA32Float:
-                bytesPerPixel = 16;
-                break;
-            case MTLPixelFormatDepth32Float:
-            case MTLPixelFormatDepth32Float_Stencil8:
-                // Depth textures can't be directly read - this will fail
-                metal_debug_log("ERROR: capture_texture_pixels() - cannot read depth texture directly");
-                return false;
-            default:
-                metal_debug_log("ERROR: capture_texture_pixels() - unsupported pixel format %lu", (unsigned long)pixelFormat);
-                return false;
-        }
-
-        NSUInteger bytesPerRow = width * bytesPerPixel;
-
-        // Read pixels from texture to buffer
-        [metalTexture getBytes:data
-                   bytesPerRow:bytesPerRow
-                    fromRegion:region
-                   mipmapLevel:level];
-
-        metal_debug_log("capture_texture_pixels() - SUCCESS (width=%d, height=%d, level=%d)", width, height, level);
-        return true;
-    }
-}
-
-HL_PRIM void HL_NAME(generate_mipmaps)(vdynamic *texture) {
-    if (texture == NULL || ctx == NULL || ctx->commandQueue == NULL) return;
-
-    @autoreleasepool {
-        id<MTLTexture> metalTexture = (__bridge id<MTLTexture>)texture;
-        id<MTLCommandQueue> commandQueue = (__bridge id<MTLCommandQueue>)ctx->commandQueue;
-
-        // Create a blit command encoder to generate mipmaps
-        id<MTLCommandBuffer> commandBuffer = [commandQueue commandBuffer];
-        if (commandBuffer == NULL) {
-            metal_debug_log("ERROR: generate_mipmaps() - failed to create command buffer");
-            return;
-        }
-
-        id<MTLBlitCommandEncoder> blitEncoder = [commandBuffer blitCommandEncoder];
-        if (blitEncoder == NULL) {
-            metal_debug_log("ERROR: generate_mipmaps() - failed to create blit encoder");
-            return;
-        }
-
-        [blitEncoder generateMipmapsForTexture:metalTexture];
-        [blitEncoder endEncoding];
-
-        [commandBuffer commit];
-        [commandBuffer waitUntilCompleted];
-
-        metal_debug_log("generate_mipmaps() - SUCCESS");
-    }
-}
-
-HL_PRIM void HL_NAME(dispose_texture)(vdynamic *texture) {
-    if (texture == NULL) return;
-
-    @autoreleasepool {
-        id<MTLTexture> metalTexture = (__bridge_transfer id<MTLTexture>)texture;
-        (void)metalTexture; // ARC will handle release
-    }
-}
-
-// Sampler State Management
-// filter: 0=Nearest, 1=Linear
-// mipFilter: 0=None, 1=Nearest, 2=Linear
-// wrap: 0=Clamp, 1=Repeat
-HL_PRIM vdynamic* HL_NAME(create_sampler_state)(int minFilter, int magFilter, int mipFilter, int wrapS, int wrapT) {
-    if (ctx == NULL || ctx->device == NULL) return NULL;
-
-    @autoreleasepool {
-        id<MTLDevice> device = (__bridge id<MTLDevice>)ctx->device;
-
-        MTLSamplerDescriptor *samplerDesc = [[MTLSamplerDescriptor alloc] init];
-
-        // Min/Mag filter
-        samplerDesc.minFilter = (minFilter == 0) ? MTLSamplerMinMagFilterNearest : MTLSamplerMinMagFilterLinear;
-        samplerDesc.magFilter = (magFilter == 0) ? MTLSamplerMinMagFilterNearest : MTLSamplerMinMagFilterLinear;
-
-        // Mip filter
-        if (mipFilter == 0) {
-            samplerDesc.mipFilter = MTLSamplerMipFilterNotMipmapped;
-        } else if (mipFilter == 1) {
-            samplerDesc.mipFilter = MTLSamplerMipFilterNearest;
-        } else {
-            samplerDesc.mipFilter = MTLSamplerMipFilterLinear;
-        }
-
-        // Wrap modes
-        MTLSamplerAddressMode addressModeS = (wrapS == 1) ? MTLSamplerAddressModeRepeat : MTLSamplerAddressModeClampToEdge;
-        MTLSamplerAddressMode addressModeT = (wrapT == 1) ? MTLSamplerAddressModeRepeat : MTLSamplerAddressModeClampToEdge;
-        samplerDesc.sAddressMode = addressModeS;
-        samplerDesc.tAddressMode = addressModeT;
-
-        id<MTLSamplerState> samplerState = [device newSamplerStateWithDescriptor:samplerDesc];
-        if (samplerState == NULL) {
-            metal_debug_log("ERROR: create_sampler_state() - failed to create sampler");
-            return NULL;
-        }
-
-        return (vdynamic*)(__bridge_retained void*)samplerState;
-    }
-}
-
-HL_PRIM void HL_NAME(dispose_sampler)(vdynamic *sampler) {
-    if (sampler == NULL) return;
-
-    @autoreleasepool {
-        id<MTLSamplerState> samplerState = (__bridge_transfer id<MTLSamplerState>)sampler;
-        (void)samplerState; // ARC will handle release
-    }
-}
-
-HL_PRIM void HL_NAME(set_fragment_samplers)(vdynamic *encoder, varray *samplers) {
-    if (encoder == NULL || samplers == NULL) return;
-
-    @autoreleasepool {
-        id<MTLRenderCommandEncoder> renderEncoder = (__bridge id<MTLRenderCommandEncoder>)encoder;
-
-        int count = samplers->size;
-        if (count <= 0) return;
-
-        // Convert varray to id<MTLSamplerState> array
-        id<MTLSamplerState> samplerArray[count];
-        vdynamic **samplerPtrs = hl_aptr(samplers, vdynamic*);
-
-        for (int i = 0; i < count; i++) {
-            samplerArray[i] = (__bridge id<MTLSamplerState>)samplerPtrs[i];
-        }
-
-        [renderEncoder setFragmentSamplerStates:samplerArray withRange:NSMakeRange(0, count)];
-    }
-}
-
-HL_PRIM void HL_NAME(set_fragment_sampler)(vdynamic *encoder, vdynamic *sampler, int index) {
-    if (encoder == NULL || sampler == NULL) return;
-
-    @autoreleasepool {
-        id<MTLRenderCommandEncoder> renderEncoder = (__bridge id<MTLRenderCommandEncoder>)encoder;
-        id<MTLSamplerState> samplerState = (__bridge id<MTLSamplerState>)sampler;
-        [renderEncoder setFragmentSamplerState:samplerState atIndex:index];
-    }
-}
-DEFINE_PRIM(_VOID, set_fragment_sampler, _DYN _DYN _I32);
-
-// Shader compilation - Metal specific with MSL (new functions only)
-HL_PRIM vdynamic* HL_NAME(compile_shader)(vstring *source, int shaderType) {
-    if (ctx == NULL || ctx->device == NULL || source == NULL) return NULL;
-
-    @autoreleasepool {
-        id<MTLDevice> device = (__bridge id<MTLDevice>)ctx->device;
-
-        NSString *shaderSource = [NSString stringWithUTF8String:(const char*)hl_to_utf8(source->bytes)];
-        if (shaderSource == NULL) return NULL;
-
-        // Log full shader source for debugging
-        metal_debug_log("=== FULL SHADER SOURCE (type=%d) ===\n%s\n=== END SHADER SOURCE ===", shaderType, [shaderSource UTF8String]);
-
-        NSError *error = nil;
-        id<MTLLibrary> library = [device newLibraryWithSource:shaderSource options:nil error:&error];
-        if (library == NULL || error != nil) {
-            metal_log_error("Shader compilation failed: %s", [error.localizedDescription UTF8String]);
-            return NULL;
-        }
-
-        // Get the main function - Metal shaders should have a main function
-        // shaderType: 0=vertex, 1=fragment, 2=compute
-        NSString *functionName;
-        if (shaderType == 0) {
-            functionName = @"vertex_main";
-        } else if (shaderType == 1) {
-            functionName = @"fragment_main";
-        } else if (shaderType == 2) {
-            functionName = @"compute_main";
-        } else {
-            metal_debug_log("Unknown shader type: %d", shaderType);
-            return NULL;
-        }
-        
-        id<MTLFunction> function = [library newFunctionWithName:functionName];
-        if (function == NULL) {
-            metal_debug_log("Failed to find function %s in shader", [functionName UTF8String]);
-            return NULL;
-        }
-
-        return (vdynamic*)(__bridge_retained void*)function;
-    }
-}
-
-// Create compute pipeline state from a compiled function
-HL_PRIM vdynamic* HL_NAME(create_compute_pipeline_from_function)(vdynamic *func) {
-    if (ctx == NULL || ctx->device == NULL || func == NULL) return NULL;
-
-    @autoreleasepool {
-        id<MTLDevice> device = (__bridge id<MTLDevice>)ctx->device;
-        id<MTLFunction> function = (__bridge id<MTLFunction>)func;
-
-        NSError *error = nil;
-        id<MTLComputePipelineState> pipelineState = [device newComputePipelineStateWithFunction:function error:&error];
-        if (!pipelineState) {
-            metal_debug_log("Failed to create compute pipeline state: %s", [[error localizedDescription] UTF8String]);
-            return NULL;
-        }
-
-        metal_debug_log("Created compute pipeline state successfully");
-        return (vdynamic*)(__bridge_retained void*)pipelineState;
-    }
-}
-
-// Map Heaps Blend enum to MTLBlendFactor
-// MUST match order in h3d/mat/Data.hx Blend enum:
-// One=0, Zero=1, SrcAlpha=2, SrcColor=3, DstAlpha=4, DstColor=5,
-// OneMinusSrcAlpha=6, OneMinusSrcColor=7, OneMinusDstAlpha=8, OneMinusDstColor=9,
-// SrcAlphaSaturate=10
-static const MTLBlendFactor BLEND_FACTORS[] = {
-    MTLBlendFactorOne,                      // One = 0
-    MTLBlendFactorZero,                     // Zero = 1
-    MTLBlendFactorSourceAlpha,              // SrcAlpha = 2
-    MTLBlendFactorSourceColor,              // SrcColor = 3
-    MTLBlendFactorDestinationAlpha,         // DstAlpha = 4
-    MTLBlendFactorDestinationColor,         // DstColor = 5
-    MTLBlendFactorOneMinusSourceAlpha,      // OneMinusSrcAlpha = 6
-    MTLBlendFactorOneMinusSourceColor,      // OneMinusSrcColor = 7
-    MTLBlendFactorOneMinusDestinationAlpha, // OneMinusDstAlpha = 8
-    MTLBlendFactorOneMinusDestinationColor, // OneMinusDstColor = 9
-    MTLBlendFactorSourceAlphaSaturated,     // SrcAlphaSaturate = 10
-};
-
-// Map Heaps Operation enum to MTLBlendOperation
-// MUST match order in h3d/mat/Data.hx Operation enum:
-// Add=0, Sub=1, ReverseSub=2, Min=3, Max=4
-static const MTLBlendOperation BLEND_OPS[] = {
-    MTLBlendOperationAdd,             // Add = 0
-    MTLBlendOperationSubtract,        // Sub = 1
-    MTLBlendOperationReverseSubtract, // ReverseSub = 2
-    MTLBlendOperationMin,             // Min = 3
-    MTLBlendOperationMax,             // Max = 4
-};
-
-HL_PRIM vdynamic* HL_NAME(create_render_pipeline)(vdynamic *vertexShader, vdynamic *fragmentShader, vstring *vertexDesc, int blendSrc, int blendDst, int blendAlphaSrc, int blendAlphaDst, int blendOp, int blendAlphaOp) {
-    if (ctx == NULL || ctx->device == NULL || vertexShader == NULL || fragmentShader == NULL) return NULL;
-
-    @autoreleasepool {
-        id<MTLDevice> device = (__bridge id<MTLDevice>)ctx->device;
-        id<MTLFunction> vertexFunction = (__bridge id<MTLFunction>)vertexShader;
-        id<MTLFunction> fragmentFunction = (__bridge id<MTLFunction>)fragmentShader;
-
-#ifdef METAL_DEBUG
-        // Debug: log the vertex descriptor string
-        if (vertexDesc != NULL && vertexDesc->bytes != NULL) {
-            const char *descStr = (const char*)hl_to_utf8(vertexDesc->bytes);
-            metal_debug_log("create_render_pipeline() - vertexDesc: '%s'", descStr);
-        } else {
-            metal_debug_log("create_render_pipeline() - vertexDesc is NULL");
-        }
-#endif
-
-        MTLRenderPipelineDescriptor *descriptor = [[MTLRenderPipelineDescriptor alloc] init];
-        descriptor.vertexFunction = vertexFunction;
-        descriptor.fragmentFunction = fragmentFunction;
-
-// CRITICAL FIX: Use current render target's pixel format instead of hardcoded BGRA8Unorm
-// Use the pixel format stored when we began the render pass
-MTLPixelFormat targetPixelFormat = (MTLPixelFormat)ctx->currentTargetPixelFormat;
-
-// If no format was set (shouldn't happen), default to BGRA8Unorm
-if (targetPixelFormat == 0) {
-    targetPixelFormat = MTLPixelFormatBGRA8Unorm;
-    metal_debug_log("WARNING: create_render_pipeline() - currentTargetPixelFormat not set, using BGRA8Unorm");
-} else {
-    metal_debug_log("create_render_pipeline() - Using pixel format: %d", (int)targetPixelFormat);
-}
-
-// Check if this is a depth-only format (for shadow maps)
-BOOL isDepthFormat = (targetPixelFormat == MTLPixelFormatDepth16Unorm ||
-                      targetPixelFormat == MTLPixelFormatDepth32Float ||
-                      targetPixelFormat == MTLPixelFormatDepth32Float_Stencil8 ||
-                      targetPixelFormat == MTLPixelFormatDepth24Unorm_Stencil8);
-
-if (isDepthFormat) {
-    // Depth-only rendering (e.g., shadow maps) - NO color attachment
-    metal_debug_log("create_render_pipeline() - Depth-only pipeline (no color attachment)");
-    descriptor.colorAttachments[0].pixelFormat = MTLPixelFormatInvalid;
-
-    // Set depth attachment format
-    descriptor.depthAttachmentPixelFormat = targetPixelFormat;
-
-    // Set stencil format if applicable
-    if (targetPixelFormat == MTLPixelFormatDepth32Float_Stencil8 ||
-        targetPixelFormat == MTLPixelFormatDepth24Unorm_Stencil8) {
-        descriptor.stencilAttachmentPixelFormat = targetPixelFormat;
-    }
-} else {
-    // Color rendering - set up color attachment(s)
-    // Check for MRT (Multiple Render Targets)
-    int mrtCount = ctx->currentMRTCount;
-    if (mrtCount <= 0) mrtCount = 1;  // Default to single target
-    
-    metal_debug_log("create_render_pipeline() - Setting up %d color attachment(s)", mrtCount);
-    
-    // CRITICAL FIX: Use per-attachment pixel formats for MRT
-    // Different G-Buffer textures may have different formats (RGBA8, RGBA16F, R32F, etc.)
-    for (int i = 0; i < mrtCount; i++) {
-        MTLPixelFormat attachmentFormat;
-        if (mrtCount > 1 && ctx->currentMRTPixelFormats[i] != 0) {
-            // MRT mode: use the specific format for each attachment
-            attachmentFormat = (MTLPixelFormat)ctx->currentMRTPixelFormats[i];
-            metal_debug_log("  MRT attachment %d: format=%d", i, (int)attachmentFormat);
-        } else {
-            // Single target mode: use the common target format
-            attachmentFormat = targetPixelFormat;
-        }
-        descriptor.colorAttachments[i].pixelFormat = attachmentFormat;
-        
-        // Configure blend state from parameters
-        // Disable blending only for (One, Zero) which is opaque rendering
-        BOOL blendingEnabled = !(blendSrc == 0 && blendDst == 1);
-        descriptor.colorAttachments[i].blendingEnabled = blendingEnabled;
-        descriptor.colorAttachments[i].rgbBlendOperation = BLEND_OPS[blendOp];
-        descriptor.colorAttachments[i].alphaBlendOperation = BLEND_OPS[blendAlphaOp];
-        descriptor.colorAttachments[i].sourceRGBBlendFactor = BLEND_FACTORS[blendSrc];
-        descriptor.colorAttachments[i].sourceAlphaBlendFactor = BLEND_FACTORS[blendAlphaSrc];
-        descriptor.colorAttachments[i].destinationRGBBlendFactor = BLEND_FACTORS[blendDst];
-        descriptor.colorAttachments[i].destinationAlphaBlendFactor = BLEND_FACTORS[blendAlphaDst];
-    }
-    
-    // CRITICAL: Mark unused color attachments as Invalid to handle shader outputs
-    // that exceed the current render target count (e.g., shader writes to [[color(5)]]
-    // but render pass only has 5 targets 0-4)
-    for (int i = mrtCount; i < 8; i++) {
-        descriptor.colorAttachments[i].pixelFormat = MTLPixelFormatInvalid;
-    }
-
-    metal_debug_log("create_render_pipeline() - Blend: src=%d dst=%d alphaSrc=%d alphaDst=%d op=%d alphaOp=%d enabled=%d",
-                   blendSrc, blendDst, blendAlphaSrc, blendAlphaDst, blendOp, blendAlphaOp, !(blendSrc == 0 && blendDst == 1));
-
-    // Only set depth-stencil formats if we have a depth buffer attached
-    // Check if ctx has depth texture information (stored during render pass setup)
-    if (ctx->hasDepthBuffer) {
-        descriptor.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float_Stencil8;
-        descriptor.stencilAttachmentPixelFormat = MTLPixelFormatDepth32Float_Stencil8;
-    } else {
-        // No depth buffer - leave formats as MTLPixelFormatInvalid (default)
-        descriptor.depthAttachmentPixelFormat = MTLPixelFormatInvalid;
-        descriptor.stencilAttachmentPixelFormat = MTLPixelFormatInvalid;
-    }
-}
-
-// Parse vertexDesc and dynamically build vertex descriptor
-// Format: "position:float3,normal:float3,uv:float2" etc.
-        MTLVertexDescriptor *vertexDescriptor = [[MTLVertexDescriptor alloc] init];
-
-if (vertexDesc != NULL && vertexDesc->bytes != NULL) {
-    NSString *descStr = [NSString stringWithUTF8String:(const char*)hl_to_utf8(vertexDesc->bytes)];
-
-    // Check if stride is explicitly specified: "attr1:type1,attr2:type2|stride:N|instride:M"
-    int explicitStride = 0;
-    int explicitInstanceStride = 0;
-    NSArray *mainParts = [descStr componentsSeparatedByString:@"|"];
-    NSString *attributesStr = mainParts[0];
-
-    if (mainParts.count > 1) {
-        // Parse optional stride parameters
-        for (int i = 1; i < mainParts.count; i++) {
-            NSString *param = [mainParts[i] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
-            if ([param hasPrefix:@"stride:"]) {
-                explicitStride = [[param substringFromIndex:7] intValue];
-                metal_debug_log("Explicit stride specified: %d bytes", explicitStride);
-            } else if ([param hasPrefix:@"instride:"]) {
-                explicitInstanceStride = [[param substringFromIndex:9] intValue];
-                metal_debug_log("Explicit instance stride specified: %d bytes", explicitInstanceStride);
-            }
-        }
-    }
-
-    NSArray *attributes = [attributesStr componentsSeparatedByString:@","];
-
-    int currentOffset = 0;
-    int attributeIndex = 0;
-    int instanceBufferOffset = 0;  // Track offset for instance buffer attributes
-    int instanceAttrStartIndex = -1;  // First instance attribute index
-    int instanceStepRate = 1;  // Track step rate for instance buffer (divisor)
-
-    for (NSString *attr in attributes) {
-        NSArray *parts = [attr componentsSeparatedByString:@":"];
-        if (parts.count >= 2) {
-            // Format: name:type or name:type:bufferIndex or name:type:bufferIndex:divisor
-            __unused NSString *name = [parts[0] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
-            NSString *type = [parts[1] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
-            int bufferIndex = 0;  // Default to buffer 0
-            int divisor = 1;  // Default divisor
-            if (parts.count >= 3) {
-                bufferIndex = [[parts[2] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]] intValue];
-            }
-            if (parts.count >= 4) {
-                divisor = [[parts[3] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]] intValue];
-                if (divisor > 0) instanceStepRate = divisor;
-            }
-
-            MTLVertexFormat format;
-            int size = 0;
-
-            if ([type isEqualToString:@"float"]) {
-                format = MTLVertexFormatFloat;
-                size = 4;
-            } else if ([type isEqualToString:@"float2"]) {
-                format = MTLVertexFormatFloat2;
-                size = 8;
-            } else if ([type isEqualToString:@"float3"]) {
-                format = MTLVertexFormatFloat3;
-                size = 12;
-            } else if ([type isEqualToString:@"float4"]) {
-                format = MTLVertexFormatFloat4;
-                size = 16;
-            } else if ([type isEqualToString:@"uchar4"]) {
-                format = MTLVertexFormatUChar4;
-                size = 4;
-            } else {
-                metal_debug_log("Unknown vertex type: %s", [type UTF8String]);
-                continue;
-            }
-
-            vertexDescriptor.attributes[attributeIndex].format = format;
-            if (bufferIndex == 0) {
-                vertexDescriptor.attributes[attributeIndex].offset = currentOffset;
-                vertexDescriptor.attributes[attributeIndex].bufferIndex = 0;
-                currentOffset += size;
-            } else {
-                // Instance buffer attribute
-                if (instanceAttrStartIndex < 0) instanceAttrStartIndex = attributeIndex;
-                vertexDescriptor.attributes[attributeIndex].offset = instanceBufferOffset;
-                vertexDescriptor.attributes[attributeIndex].bufferIndex = bufferIndex;
-                instanceBufferOffset += size;
-            }
-
-            metal_debug_log("Vertex attribute %d: %s (%s) at offset %d in buffer %d",
-                          attributeIndex, [name UTF8String], [type UTF8String], 
-                          (bufferIndex == 0) ? (currentOffset - size) : (instanceBufferOffset - size),
-                          bufferIndex);
-
-            attributeIndex++;
-        }
-    }
-
-    // Set vertex buffer 0 layout (per-vertex data)
-    int finalStride = (explicitStride > 0) ? explicitStride : currentOffset;
-    vertexDescriptor.layouts[0].stride = finalStride;
-    vertexDescriptor.layouts[0].stepRate = 1;
-    vertexDescriptor.layouts[0].stepFunction = MTLVertexStepFunctionPerVertex;
-    
-    // Set vertex buffer 1 layout for instance data (per-instance stepping)
-    if (instanceBufferOffset > 0 || explicitInstanceStride > 0) {
-        int finalInstanceStride = (explicitInstanceStride > 0) ? explicitInstanceStride : instanceBufferOffset;
-        vertexDescriptor.layouts[1].stride = finalInstanceStride;
-        vertexDescriptor.layouts[1].stepRate = instanceStepRate;
-        vertexDescriptor.layouts[1].stepFunction = MTLVertexStepFunctionPerInstance;
-        metal_debug_log("Instance buffer layout: stride=%d bytes (explicit=%d, calculated=%d), stepRate=%d", finalInstanceStride, explicitInstanceStride, instanceBufferOffset, instanceStepRate);
-    }
-
-    metal_debug_log("Vertex descriptor: stride=%d bytes (explicit=%d, calculated=%d), %d attributes",
-                  finalStride, explicitStride, currentOffset, attributeIndex);
-} else {
-    // Fallback to 2D format if no descriptor provided
-    metal_debug_log("No vertex descriptor provided, using 2D fallback");
-    vertexDescriptor.attributes[0].format = MTLVertexFormatFloat2;
-    vertexDescriptor.attributes[0].offset = 0;
-    vertexDescriptor.attributes[0].bufferIndex = 0;
-
-    vertexDescriptor.attributes[1].format = MTLVertexFormatFloat2;
-    vertexDescriptor.attributes[1].offset = 8;
-    vertexDescriptor.attributes[1].bufferIndex = 0;
-
-    vertexDescriptor.attributes[2].format = MTLVertexFormatFloat4;
-    vertexDescriptor.attributes[2].offset = 16;
-    vertexDescriptor.attributes[2].bufferIndex = 0;
-
-    vertexDescriptor.layouts[0].stride = 32;
-    vertexDescriptor.layouts[0].stepRate = 1;
-    vertexDescriptor.layouts[0].stepFunction = MTLVertexStepFunctionPerVertex;
-}
-
-        descriptor.vertexDescriptor = vertexDescriptor;
-
-        NSError *error = nil;
-        id<MTLRenderPipelineState> pipelineState = [device newRenderPipelineStateWithDescriptor:descriptor error:&error];
-        if (pipelineState == NULL || error != nil) {
-            metal_debug_log("Pipeline creation failed: %s", [error.localizedDescription UTF8String]);
-            return NULL;
-        }
-
-        metal_debug_log("create_render_pipeline() - SUCCESS");
-        return (vdynamic*)(__bridge_retained void*)pipelineState;
-    }
-}
-
-HL_PRIM void HL_NAME(dispose_pipeline)(vdynamic *pipeline) {
-    if (pipeline == NULL) return;
-
-    @autoreleasepool {
-        id<MTLRenderPipelineState> pipelineState = (__bridge_transfer id<MTLRenderPipelineState>)pipeline;
-        (void)pipelineState; // ARC will handle release
-    }
-}
-
-// Render command encoder - Metal specific API (new functions only)
-HL_PRIM vdynamic* HL_NAME(begin_render_pass)(vdynamic *cmdBuffer, int r, int g, int b, int a) {
-    if (ctx == NULL || cmdBuffer == NULL) return NULL;
-
-    @autoreleasepool {
-        id<MTLCommandBuffer> commandBuffer = (__bridge id<MTLCommandBuffer>)cmdBuffer;
-        CAMetalLayer *metalLayer = (__bridge CAMetalLayer*)ctx->layer;
-
-        id<CAMetalDrawable> drawable = [metalLayer nextDrawable];
-        if (drawable == NULL) {
-            return NULL;
-        }
-
-        // Store the drawable and command buffer for presentation
-        if (ctx->currentDrawable != NULL) {
-            id<CAMetalDrawable> oldDrawable = (__bridge_transfer id<CAMetalDrawable>)ctx->currentDrawable;
-            (void)oldDrawable; // Release old drawable
-        }
-        ctx->currentDrawable = (__bridge_retained void*)drawable;
-        ctx->currentCommandBuffer = (__bridge void*)commandBuffer;
-
-        // Set pixel format to backbuffer format (BGRA8Unorm)
-        ctx->currentTargetPixelFormat = (int)MTLPixelFormatBGRA8Unorm;
-        ctx->currentMRTCount = 0;  // Backbuffer is single target, not MRT
-
-        // CRITICAL: Clear lastMRTCount at the start of a new frame (when clearing backbuffer)
-        // This ensures MRT textures from the previous frame don't leak into the new frame
-        ctx->lastMRTCount = 0;
-        for (int i = 0; i < 8; i++) {
-            if (ctx->lastMRTTextures[i] != NULL) {
-                // Release the retained texture reference
-                id<MTLTexture> tex = (__bridge_transfer id<MTLTexture>)ctx->lastMRTTextures[i];
-                (void)tex; // ARC will release
-                ctx->lastMRTTextures[i] = NULL;
-            }
-        }
-        ctx->lastMRTDepthTexture = NULL;
-
-        // Backbuffer rendering always has depth buffer attached
-        ctx->hasDepthBuffer = true;
-
-        MTLRenderPassDescriptor *renderPassDescriptor = [MTLRenderPassDescriptor renderPassDescriptor];
-        renderPassDescriptor.colorAttachments[0].texture = drawable.texture;
-        renderPassDescriptor.colorAttachments[0].loadAction = MTLLoadActionClear;
-        renderPassDescriptor.colorAttachments[0].storeAction = MTLStoreActionStore;
-        renderPassDescriptor.colorAttachments[0].clearColor = MTLClearColorMake(r/255.0, g/255.0, b/255.0, a/255.0);
-
-        // CRITICAL: Attach depth-stencil texture for depth and stencil testing to work!
-        if (ctx->depthTexture != NULL) {
-            id<MTLTexture> depthTexture = (__bridge id<MTLTexture>)ctx->depthTexture;
-            renderPassDescriptor.depthAttachment.texture = depthTexture;
-            renderPassDescriptor.depthAttachment.loadAction = MTLLoadActionClear;
-            renderPassDescriptor.depthAttachment.storeAction = MTLStoreActionStore;  // MUST Store to preserve depth between passes
-            renderPassDescriptor.depthAttachment.clearDepth = 1.0;
-
-            // Attach stencil (using the same texture as depth since we use combined depth-stencil format)
-            renderPassDescriptor.stencilAttachment.texture = depthTexture;
-            renderPassDescriptor.stencilAttachment.loadAction = MTLLoadActionClear;
-            renderPassDescriptor.stencilAttachment.storeAction = MTLStoreActionStore;  // MUST Store to preserve stencil between passes!
-            renderPassDescriptor.stencilAttachment.clearStencil = 0;
-
-            metal_debug_log("begin_render_pass() - Stencil attachment configured (clear=0)");
-
-            metal_debug_log("begin_render_pass() - Depth-stencil texture attached: %p", depthTexture);
-        } else {
-            metal_debug_log("begin_render_pass() - WARNING: No depth-stencil texture!");
-        }
-
-        id<MTLRenderCommandEncoder> encoder = [commandBuffer renderCommandEncoderWithDescriptor:renderPassDescriptor];
-        if (encoder == NULL) return NULL;
-
-        // Set winding order to counter-clockwise (Heaps/OpenGL convention)
-        [encoder setFrontFacingWinding:MTLWindingClockwise];
-
-        metal_debug_log("begin_render_pass() - SUCCESS");
-        return (vdynamic*)(__bridge_retained void*)encoder;
-    }
-}
-
-HL_PRIM vdynamic* HL_NAME(resume_render_pass)(vdynamic *cmdBuffer) {
-    metal_debug_log("resume_render_pass called");
-    if (ctx == NULL || cmdBuffer == NULL) {
-        metal_debug_log("ERROR: resume_render_pass() - ctx=%p cmdBuffer=%p", ctx, cmdBuffer);
-        metal_log_error("resume_render_pass: ctx or cmdBuffer is NULL");
-        return NULL;
-    }
-    
-    if (ctx->currentDrawable == NULL) {
-        metal_debug_log("resume_render_pass: no currentDrawable - caller should fall back to begin_render_pass");
-        return NULL;
-    }
-    
-    metal_debug_log("resume_render_pass: lastMRTCount=%d", ctx->lastMRTCount);
-
-    @autoreleasepool {
-        id<MTLCommandBuffer> commandBuffer = (__bridge id<MTLCommandBuffer>)cmdBuffer;
-        id<CAMetalDrawable> drawable = (__bridge id<CAMetalDrawable>)ctx->currentDrawable;
-        
-        metal_debug_log("resume_render_pass() - drawable=%p texture=%p", drawable, drawable.texture);
-        
-        // Update command buffer reference
-        ctx->currentCommandBuffer = (__bridge void*)commandBuffer;
-        
-        // CRITICAL: Reset target format and MRT count for backbuffer
-        ctx->currentTargetPixelFormat = (int)MTLPixelFormatBGRA8Unorm;
-        ctx->currentMRTCount = 0;  // Backbuffer is single target, not MRT
-        ctx->hasDepthBuffer = true;  // Backbuffer has depth buffer
-
-        MTLRenderPassDescriptor *renderPassDescriptor = [MTLRenderPassDescriptor renderPassDescriptor];
-        renderPassDescriptor.colorAttachments[0].texture = drawable.texture;
-        renderPassDescriptor.colorAttachments[0].loadAction = MTLLoadActionLoad;  // LOAD existing content!
-        renderPassDescriptor.colorAttachments[0].storeAction = MTLStoreActionStore;
-
-        // CRITICAL: Attach depth-stencil texture for depth and stencil testing to work!
-        if (ctx->depthTexture != NULL) {
-            id<MTLTexture> depthTexture = (__bridge id<MTLTexture>)ctx->depthTexture;
-            renderPassDescriptor.depthAttachment.texture = depthTexture;
-            renderPassDescriptor.depthAttachment.loadAction = MTLLoadActionLoad;  // Load existing depth
-            renderPassDescriptor.depthAttachment.storeAction = MTLStoreActionStore;
-
-            // CRITICAL: Also load the stencil attachment to preserve stencil buffer between passes!
-            renderPassDescriptor.stencilAttachment.texture = depthTexture;
-            renderPassDescriptor.stencilAttachment.loadAction = MTLLoadActionLoad;  // Load existing stencil
-            renderPassDescriptor.stencilAttachment.storeAction = MTLStoreActionStore;
-        }
-
-        id<MTLRenderCommandEncoder> encoder = [commandBuffer renderCommandEncoderWithDescriptor:renderPassDescriptor];
-        if (encoder == NULL) {
-            metal_debug_log("ERROR: resume_render_pass() - failed to create encoder!");
-            return NULL;
-        }
-
-        // Set winding order to counter-clockwise (Heaps/OpenGL convention)
-        [encoder setFrontFacingWinding:MTLWindingClockwise];
-        
-        // CRITICAL FIX: Declare G-Buffer/MRT textures as resources for the lighting pass
-        // This ensures Metal properly synchronizes texture data from the previous G-Buffer pass
-        // Without this, the lighting shader may receive invalid/uninitialized texture data
-        metal_debug_log("resume_render_pass: About to declare %d MRT resources", ctx->lastMRTCount);
-        if (ctx->lastMRTCount > 0) {
-            metal_debug_log("resume_render_pass: Declaring MRT textures...");
-            for (int i = 0; i < ctx->lastMRTCount; i++) {
-                if (ctx->lastMRTTextures[i] != NULL) {
-                    id<MTLTexture> gBufferTex = (__bridge id<MTLTexture>)ctx->lastMRTTextures[i];
-                    [encoder useResource:gBufferTex usage:MTLResourceUsageRead stages:MTLRenderStageFragment];
-                    metal_debug_log("resume_render_pass: useResource called for MRT[%d]", i);
-                } else {
-                    metal_log_warning("resume_render_pass: MRT[%d] is NULL!", i);
-                }
-            }
-            // Also declare depth buffer if available
-            if (ctx->lastMRTDepthTexture != NULL) {
-                id<MTLTexture> depthTex = (__bridge id<MTLTexture>)ctx->lastMRTDepthTexture;
-                [encoder useResource:depthTex usage:MTLResourceUsageRead stages:MTLRenderStageFragment];
-                metal_debug_log("resume_render_pass: useResource called for depth texture");
-            }
-        } else {
-            metal_log_warning("resume_render_pass: WARNING - lastMRTCount is 0!");
-        }
-
-        metal_debug_log("resume_render_pass() - SUCCESS");
-        return (vdynamic*)(__bridge_retained void*)encoder;
-    }
-}
-
-HL_PRIM vdynamic* HL_NAME(begin_texture_render_pass)(vdynamic *cmdBuffer, vdynamic *texture, int r, int g, int b, int a, vdynamic *depthTexParam, int layer, int mipLevel, int depthAction) {
-    if (ctx == NULL || cmdBuffer == NULL || texture == NULL) {
-        metal_debug_log("ERROR: begin_texture_render_pass() - invalid parameters");
-        return NULL;
-    }
-
-    @autoreleasepool {
-        id<MTLCommandBuffer> commandBuffer = (__bridge id<MTLCommandBuffer>)cmdBuffer;
-        id<MTLTexture> metalTexture = (__bridge id<MTLTexture>)texture;
-        
-        // Update command buffer reference
-        ctx->currentCommandBuffer = (__bridge void*)commandBuffer;
-
-        // Check if this is a depth texture (for shadow maps)
-        MTLPixelFormat pixelFormat = [metalTexture pixelFormat];
-        BOOL isDepthTexture = (pixelFormat == MTLPixelFormatDepth16Unorm ||
-                               pixelFormat == MTLPixelFormatDepth32Float ||
-                               pixelFormat == MTLPixelFormatDepth32Float_Stencil8 ||
-                               pixelFormat == MTLPixelFormatDepth24Unorm_Stencil8);
-
-        // Store texture format and MRT count for pipeline creation
-        ctx->currentTargetPixelFormat = (int)pixelFormat;
-        ctx->currentMRTCount = 0;  // Single render target (not MRT)
-
-        MTLRenderPassDescriptor *renderPassDescriptor = [MTLRenderPassDescriptor renderPassDescriptor];
-
-        if (isDepthTexture) {
-            // Depth-only render pass for shadow maps (NO color attachment!)
-            metal_debug_log("begin_texture_render_pass() - Creating DEPTH-ONLY pass for shadow map");
-
-            renderPassDescriptor.depthAttachment.texture = metalTexture;
-            if (a < 0) {
-                renderPassDescriptor.depthAttachment.loadAction = MTLLoadActionLoad;
-            } else {
-                renderPassDescriptor.depthAttachment.loadAction = MTLLoadActionClear;
-                renderPassDescriptor.depthAttachment.clearDepth = 1.0;
-            }
-            renderPassDescriptor.depthAttachment.storeAction = MTLStoreActionStore;
-
-            // Handle stencil component if present
-            if (pixelFormat == MTLPixelFormatDepth32Float_Stencil8 ||
-                pixelFormat == MTLPixelFormatDepth24Unorm_Stencil8) {
-                renderPassDescriptor.stencilAttachment.texture = metalTexture;
-                if (a < 0) {
-                    renderPassDescriptor.stencilAttachment.loadAction = MTLLoadActionLoad;
-                } else {
-                    renderPassDescriptor.stencilAttachment.loadAction = MTLLoadActionClear;
-                    renderPassDescriptor.stencilAttachment.clearStencil = 0;
-                }
-                renderPassDescriptor.stencilAttachment.storeAction = MTLStoreActionStore;
-            }
-        } else {
-            // Color render pass
-            // For cube maps or texture arrays, set the slice (layer)
-            // For mipmapped textures, set the mip level
-            renderPassDescriptor.colorAttachments[0].texture = metalTexture;
-            renderPassDescriptor.colorAttachments[0].slice = layer;
-            renderPassDescriptor.colorAttachments[0].level = mipLevel;
-
-            // If alpha is negative, use Load action to preserve existing content (additive rendering)
-            // Otherwise use Clear action
-            if (a < 0) {
-                renderPassDescriptor.colorAttachments[0].loadAction = MTLLoadActionLoad;
-            } else {
-                renderPassDescriptor.colorAttachments[0].loadAction = MTLLoadActionClear;
-                renderPassDescriptor.colorAttachments[0].clearColor = MTLClearColorMake(r/255.0, g/255.0, b/255.0, a/255.0);
-            }
-
-            renderPassDescriptor.colorAttachments[0].storeAction = MTLStoreActionStore;
-
-            // Only attach ctx->depthTexture if it matches the target texture size
-            // Otherwise Metal will clip rendering to the smaller of the two sizes!
-            if (ctx->depthTexture != NULL) {
-                id<MTLTexture> depthTexture = (__bridge id<MTLTexture>)ctx->depthTexture;
-                
-                // Check if depth texture matches target size
-                if (depthTexture.width == metalTexture.width && depthTexture.height == metalTexture.height) {
-                    renderPassDescriptor.depthAttachment.texture = depthTexture;
-                    // depthAction: 0=Load (preserve), 1=Clear, -1=DontCare
-                    if (depthAction == 0) {
-                        renderPassDescriptor.depthAttachment.loadAction = MTLLoadActionLoad;
-                    } else if (depthAction == 1) {
-                        renderPassDescriptor.depthAttachment.loadAction = MTLLoadActionClear;
-                        renderPassDescriptor.depthAttachment.clearDepth = 1.0;
-                    } else {
-                        renderPassDescriptor.depthAttachment.loadAction = MTLLoadActionDontCare;
-                    }
-                    renderPassDescriptor.depthAttachment.storeAction = MTLStoreActionStore;
-
-                    // CRITICAL: Also attach stencil to preserve stencil buffer
-                    renderPassDescriptor.stencilAttachment.texture = depthTexture;
-                    if (depthAction == 0) {
-                        renderPassDescriptor.stencilAttachment.loadAction = MTLLoadActionLoad;
-                    } else if (depthAction == 1) {
-                        renderPassDescriptor.stencilAttachment.loadAction = MTLLoadActionClear;
-                        renderPassDescriptor.stencilAttachment.clearStencil = 0;
-                    } else {
-                        renderPassDescriptor.stencilAttachment.loadAction = MTLLoadActionDontCare;
-                    }
-                    renderPassDescriptor.stencilAttachment.storeAction = MTLStoreActionStore;
-                }
-            }
-        }
-
-        id<MTLRenderCommandEncoder> encoder = [commandBuffer renderCommandEncoderWithDescriptor:renderPassDescriptor];
-        if (encoder == NULL) {
-            metal_debug_log("ERROR: begin_texture_render_pass() - failed to create encoder!");
-            return NULL;
-        }
-
-        // Set winding order to counter-clockwise (Heaps/OpenGL convention)
-        [encoder setFrontFacingWinding:MTLWindingClockwise];
-
-        // CRITICAL: Declare G-Buffer/MRT textures as resources for the lighting pass
-        // This ensures Metal properly synchronizes texture data from the previous G-Buffer pass
-        if (ctx->lastMRTCount > 0) {
-            for (int i = 0; i < ctx->lastMRTCount && i < 8; i++) {
-                if (ctx->lastMRTTextures[i] != NULL) {
-                    id<MTLTexture> gBufferTex = (__bridge id<MTLTexture>)ctx->lastMRTTextures[i];
-                    [encoder useResource:gBufferTex usage:MTLResourceUsageRead stages:MTLRenderStageFragment];
-                }
-            }
-        }
-
-        // CRITICAL: Set initial viewport and scissor for depth-only passes
-        if (isDepthTexture) {
-            MTLViewport viewport = {0, 0, (double)metalTexture.width, (double)metalTexture.height, 0.0, 1.0};
-            [encoder setViewport:viewport];
-            MTLScissorRect scissor = {0, 0, metalTexture.width, metalTexture.height};
-            [encoder setScissorRect:scissor];
-            metal_debug_log("NATIVE: Initial viewport for depth: %lu x %lu", (unsigned long)metalTexture.width, (unsigned long)metalTexture.height);
-        }
-
-        metal_debug_log("begin_texture_render_pass() - SUCCESS");
-        return (vdynamic*)(__bridge_retained void*)encoder;
-    }
-}
-
-// Begin a Multiple Render Target (MRT) render pass with multiple color attachments
-HL_PRIM vdynamic* HL_NAME(begin_mrt_render_pass)(vdynamic *cmdBuffer, varray *textures, int r, int g, int b, int a) {
-    if (ctx == NULL || cmdBuffer == NULL || textures == NULL) return NULL;
-    
-    @autoreleasepool {
-        id<MTLCommandBuffer> commandBuffer = (__bridge id<MTLCommandBuffer>)cmdBuffer;
-        
-        // Update command buffer reference
-        ctx->currentCommandBuffer = (__bridge void*)commandBuffer;
-        
-        int texCount = textures->size;
-        if (texCount == 0) return NULL;
-        
-        MTLRenderPassDescriptor *renderPassDescriptor = [MTLRenderPassDescriptor renderPassDescriptor];
-        
-        vdynamic **texPtrs = hl_aptr(textures, vdynamic*);
-        id<MTLTexture> firstTexture = nil;
-        
-        // Set up each color attachment and store their pixel formats
-        // CRITICAL: MRT requires per-attachment pixel format tracking for correct pipeline creation
-        for (int i = 0; i < texCount; i++) {
-            if (texPtrs[i] == NULL) {
-                ctx->currentMRTPixelFormats[i] = (int)MTLPixelFormatBGRA8Unorm; // default
-                continue;
-            }
-            
-            id<MTLTexture> metalTexture = (__bridge id<MTLTexture>)texPtrs[i];
-            if (i == 0) firstTexture = metalTexture;
-            
-            // Store the pixel format for this attachment
-            ctx->currentMRTPixelFormats[i] = (int)metalTexture.pixelFormat;
-            
-            renderPassDescriptor.colorAttachments[i].texture = metalTexture;
-            
-            if (a < 0) {
-                renderPassDescriptor.colorAttachments[i].loadAction = MTLLoadActionLoad;
-            } else {
-                renderPassDescriptor.colorAttachments[i].loadAction = MTLLoadActionClear;
-                renderPassDescriptor.colorAttachments[i].clearColor = MTLClearColorMake(r/255.0, g/255.0, b/255.0, a/255.0);
-            }
-            renderPassDescriptor.colorAttachments[i].storeAction = MTLStoreActionStore;
-            
-            metal_debug_log("MRT attachment %d: format=%d (%s)", i, (int)metalTexture.pixelFormat,
-                metalTexture.pixelFormat == MTLPixelFormatRGBA16Float ? "RGBA16F" :
-                metalTexture.pixelFormat == MTLPixelFormatRGBA8Unorm ? "RGBA8" :
-                metalTexture.pixelFormat == MTLPixelFormatR32Float ? "R32F" :
-                metalTexture.pixelFormat == MTLPixelFormatBGRA8Unorm ? "BGRA8" : "other");
-        }
-        
-        // Attach depth buffer if available and matches first texture size
-        if (ctx->depthTexture != NULL && firstTexture != nil) {
-            id<MTLTexture> depthTexture = (__bridge id<MTLTexture>)ctx->depthTexture;
-            
-            if (depthTexture.width == firstTexture.width && depthTexture.height == firstTexture.height) {
-                renderPassDescriptor.depthAttachment.texture = depthTexture;
-                if (a < 0) {
-                    renderPassDescriptor.depthAttachment.loadAction = MTLLoadActionLoad;
-                } else {
-                    renderPassDescriptor.depthAttachment.loadAction = MTLLoadActionClear;
-                    renderPassDescriptor.depthAttachment.clearDepth = 1.0;
-                }
-                renderPassDescriptor.depthAttachment.storeAction = MTLStoreActionStore;
-                
-                renderPassDescriptor.stencilAttachment.texture = depthTexture;
-                if (a < 0) {
-                    renderPassDescriptor.stencilAttachment.loadAction = MTLLoadActionLoad;
-                } else {
-                    renderPassDescriptor.stencilAttachment.loadAction = MTLLoadActionClear;
-                    renderPassDescriptor.stencilAttachment.clearStencil = 0;
-                }
-                renderPassDescriptor.stencilAttachment.storeAction = MTLStoreActionStore;
-                
-                // CRITICAL: Set hasDepthBuffer so pipeline is created with correct depth format
-                ctx->hasDepthBuffer = true;
-            }
-        } else {
-            // No depth buffer for this MRT pass
-            ctx->hasDepthBuffer = false;
-        }
-        
-        // Store MRT count and pixel format for pipeline creation
-        ctx->currentMRTCount = texCount;
-        if (firstTexture != nil) {
-            ctx->currentTargetPixelFormat = (int)firstTexture.pixelFormat;
-        }
-        
-        // CRITICAL: Store MRT textures for resource synchronization in next pass
-        // This allows the lighting pass to read from the G-Buffers written here
-        ctx->lastMRTCount = texCount;
-        
-        // Store MRT textures (only log in verbose mode)
-        for (int i = 0; i < texCount; i++) {
-            if (texPtrs[i] != NULL) {
-                id<MTLTexture> metalTexture = (__bridge id<MTLTexture>)texPtrs[i];
-                ctx->lastMRTTextures[i] = (__bridge_retained void*)metalTexture;
-                metal_debug_log("MRT[%d] STORED: ptr=%p dim=%lux%u", 
-                    i, metalTexture, (unsigned long)metalTexture.width, (unsigned)metalTexture.height);
-            } else {
-                ctx->lastMRTTextures[i] = NULL;
-            }
-        }
-        metal_debug_log("MRT_STORAGE_COMPLETE: ctx->lastMRTCount=%d", ctx->lastMRTCount);
-        
-        // Store depth texture reference if available
-        if (ctx->depthTexture != NULL) {
-            ctx->lastMRTDepthTexture = ctx->depthTexture;
-        }
-        
-        id<MTLRenderCommandEncoder> encoder = [commandBuffer renderCommandEncoderWithDescriptor:renderPassDescriptor];
-        if (encoder == NULL) {
-            metal_debug_log("ERROR: begin_mrt_render_pass() - failed to create encoder!");
-            return NULL;
-        }
-        
-        // Set winding order
-        [encoder setFrontFacingWinding:MTLWindingClockwise];
-        
-        // Set viewport based on first texture
-        if (firstTexture != nil) {
-            MTLViewport viewport = {0, 0, (double)firstTexture.width, (double)firstTexture.height, 0.0, 1.0};
-            [encoder setViewport:viewport];
-            MTLScissorRect scissor = {0, 0, firstTexture.width, firstTexture.height};
-            [encoder setScissorRect:scissor];
-        }
-        
-        metal_debug_log("begin_mrt_render_pass() - SUCCESS with %d targets", texCount);
-        return (vdynamic*)(__bridge_retained void*)encoder;
-    }
-}
-
-HL_PRIM void HL_NAME(set_render_pipeline_state)(vdynamic *encoder, vdynamic *pipeline) {
-    if (encoder == NULL || pipeline == NULL) return;
-
-    @autoreleasepool {
-        id<MTLRenderCommandEncoder> renderEncoder = (__bridge id<MTLRenderCommandEncoder>)encoder;
-        id<MTLRenderPipelineState> pipelineState = (__bridge id<MTLRenderPipelineState>)pipeline;
-
-        [renderEncoder setRenderPipelineState:pipelineState];
-        
-        // Note: Depth state is now set separately via set_depth_state()
-        metal_debug_log("set_render_pipeline_state() - SUCCESS");
-    }
-}
-
-HL_PRIM void HL_NAME(set_depth_state)(vdynamic *encoder, bool depthTest, bool depthWrite) {
-    if (encoder == NULL || ctx == NULL) return;
-
-    @autoreleasepool {
-        id<MTLRenderCommandEncoder> renderEncoder = (__bridge id<MTLRenderCommandEncoder>)encoder;
-
-        // Choose appropriate depth state based on parameters
-        id<MTLDepthStencilState> depthState = nil;
-
-        if (depthTest && depthWrite) {
-            // Full depth testing and writing - for 3D rendering
-            depthState = (__bridge id<MTLDepthStencilState>)ctx->depthEnabledState;
-            metal_debug_log("set_depth_state() - Depth test ON, write ON");
-        } else if (!depthTest && !depthWrite) {
-            // No depth testing or writing - for 2D rendering
-            depthState = (__bridge id<MTLDepthStencilState>)ctx->depthDisabledState;
-            metal_debug_log("set_depth_state() - Depth test OFF, write OFF");
-        } else {
-            // For now, treat any other combination as depth-disabled
-            // TODO: Create more depth states for other combinations if needed
-            depthState = (__bridge id<MTLDepthStencilState>)ctx->depthDisabledState;
-            metal_debug_log("set_depth_state() - Using depth-disabled state (test=%d, write=%d)", depthTest, depthWrite);
-        }
-
-        if (depthState) {
-            [renderEncoder setDepthStencilState:depthState];
-        }
-    }
-}
-
-HL_PRIM void HL_NAME(set_cull_mode)(vdynamic *encoder, int cullMode) {
-    if (encoder == NULL) return;
-
-    @autoreleasepool {
-        id<MTLRenderCommandEncoder> renderEncoder = (__bridge id<MTLRenderCommandEncoder>)encoder;
-
-        // Metal cull modes: 0 = None, 1 = Front, 2 = Back
-        MTLCullMode metalCullMode;
-        switch(cullMode) {
-            case 0: metalCullMode = MTLCullModeNone; break;
-            case 1: metalCullMode = MTLCullModeFront; break;
-            case 2: metalCullMode = MTLCullModeBack; break;
-            default: metalCullMode = MTLCullModeNone; break;
-        }
-
-        [renderEncoder setCullMode:metalCullMode];
-        metal_debug_log("set_cull_mode() - Mode: %d (%s)", cullMode,
-            cullMode == 0 ? "None" : cullMode == 1 ? "Front" : "Back");
-    }
-}
-
-HL_PRIM void HL_NAME(set_triangle_fill_mode)(vdynamic *encoder, bool wireframe) {
-    if (encoder == NULL) return;
-
-    @autoreleasepool {
-        id<MTLRenderCommandEncoder> renderEncoder = (__bridge id<MTLRenderCommandEncoder>)encoder;
-
-        // Metal triangle fill modes: MTLTriangleFillModeFill (solid) or MTLTriangleFillModeLines (wireframe)
-        MTLTriangleFillMode fillMode = wireframe ? MTLTriangleFillModeLines : MTLTriangleFillModeFill;
-
-        [renderEncoder setTriangleFillMode:fillMode];
-        metal_debug_log("set_triangle_fill_mode() - Mode: %s", wireframe ? "Wireframe" : "Solid");
-    }
-}
-
-HL_PRIM void HL_NAME(set_vertex_buffer)(vdynamic *encoder, vdynamic *buffer, int offset, int index) {
-    if (encoder == NULL || buffer == NULL) return;
-
-    @autoreleasepool {
-        id<MTLRenderCommandEncoder> renderEncoder = (__bridge id<MTLRenderCommandEncoder>)encoder;
-        id<MTLBuffer> metalBuffer = (__bridge id<MTLBuffer>)buffer;
-
-        [renderEncoder setVertexBuffer:metalBuffer offset:offset atIndex:index];
-        metal_debug_log("set_vertex_buffer() - SUCCESS (offset=%d, index=%d)", offset, index);
-    }
-}
-
-HL_PRIM void HL_NAME(set_fragment_texture)(vdynamic *encoder, vdynamic *texture, int index) {
-    if (encoder == NULL || texture == NULL) return;
-
-    @autoreleasepool {
-        id<MTLRenderCommandEncoder> renderEncoder = (__bridge id<MTLRenderCommandEncoder>)encoder;
-        id<MTLTexture> metalTexture = (__bridge id<MTLTexture>)texture;
-
-        [renderEncoder setFragmentTexture:metalTexture atIndex:index];
-        
-        // Enhanced debug: log texture details
-        metal_debug_log("set_fragment_texture() - SUCCESS (index=%d, tex=%p, %lux%lu, format=%d)", 
-            index, metalTexture, 
-            (unsigned long)metalTexture.width, (unsigned long)metalTexture.height,
-            (int)metalTexture.pixelFormat);
-    }
-}
-
-HL_PRIM void HL_NAME(set_fragment_buffer)(vdynamic *encoder, vdynamic *buffer, int offset, int index) {
-    if (encoder == NULL || buffer == NULL) return;
-
-    @autoreleasepool {
-        id<MTLRenderCommandEncoder> renderEncoder = (__bridge id<MTLRenderCommandEncoder>)encoder;
-        id<MTLBuffer> metalBuffer = (__bridge id<MTLBuffer>)buffer;
-
-        [renderEncoder setFragmentBuffer:metalBuffer offset:offset atIndex:index];
-        metal_debug_log("set_fragment_buffer() - SUCCESS (offset=%d, index=%d)", offset, index);
-    }
-}
-
-// Copy-based variants: data is copied into the command encoder, safe for multi-pass rendering
-// (e.g., cubemap shadow maps where globals change between passes within the same command buffer)
-HL_PRIM void HL_NAME(set_vertex_bytes)(vdynamic *encoder, vbyte *data, int length, int index) {
-    if (encoder == NULL || data == NULL || length <= 0) return;
-
-    @autoreleasepool {
-        id<MTLRenderCommandEncoder> renderEncoder = (__bridge id<MTLRenderCommandEncoder>)encoder;
-        [renderEncoder setVertexBytes:(const void*)data length:length atIndex:index];
-    }
-}
-
-HL_PRIM void HL_NAME(set_fragment_bytes)(vdynamic *encoder, vbyte *data, int length, int index) {
-    if (encoder == NULL || data == NULL || length <= 0) return;
-
-    @autoreleasepool {
-        id<MTLRenderCommandEncoder> renderEncoder = (__bridge id<MTLRenderCommandEncoder>)encoder;
-        [renderEncoder setFragmentBytes:(const void*)data length:length atIndex:index];
-    }
-}
-
-HL_PRIM void HL_NAME(draw_primitives)(vdynamic *encoder, int primitiveType, int vertexStart, int vertexCount) {
-    if (encoder == NULL || vertexCount <= 0) return;
-
-    @autoreleasepool {
-        id<MTLRenderCommandEncoder> renderEncoder = (__bridge id<MTLRenderCommandEncoder>)encoder;
-
-        MTLPrimitiveType metalPrimitiveType = MTLPrimitiveTypeTriangle;
-        switch (primitiveType) {
-            case 0: metalPrimitiveType = MTLPrimitiveTypePoint; break;
-            case 1: metalPrimitiveType = MTLPrimitiveTypeLine; break;
-            case 2: metalPrimitiveType = MTLPrimitiveTypeLineStrip; break;
-            case 3: metalPrimitiveType = MTLPrimitiveTypeTriangle; break;
-            case 4: metalPrimitiveType = MTLPrimitiveTypeTriangleStrip; break;
-        }
-
-        [renderEncoder drawPrimitives:metalPrimitiveType vertexStart:vertexStart vertexCount:vertexCount];
-        metal_debug_log("draw_primitives() - SUCCESS (primitiveType=%d, vertexStart=%d, vertexCount=%d)", primitiveType, vertexStart, vertexCount);
-    }
-}
-
-HL_PRIM void HL_NAME(draw_indexed_primitives)(vdynamic *encoder, int primitiveType, int indexCount, vdynamic *indexBuffer, int indexOffset, int is32bit) {
-    if (encoder == NULL || indexBuffer == NULL || indexCount <= 0) return;
-
-    @autoreleasepool {
-        id<MTLRenderCommandEncoder> renderEncoder = (__bridge id<MTLRenderCommandEncoder>)encoder;
-        id<MTLBuffer> metalIndexBuffer = (__bridge id<MTLBuffer>)indexBuffer;
-
-        MTLPrimitiveType metalPrimitiveType = MTLPrimitiveTypeTriangle;
-        switch (primitiveType) {
-            case 0: metalPrimitiveType = MTLPrimitiveTypePoint; break;
-            case 1: metalPrimitiveType = MTLPrimitiveTypeLine; break;
-            case 2: metalPrimitiveType = MTLPrimitiveTypeLineStrip; break;
-            case 3: metalPrimitiveType = MTLPrimitiveTypeTriangle; break;
-            case 4: metalPrimitiveType = MTLPrimitiveTypeTriangleStrip; break;
-        }
-
-        MTLIndexType indexType = is32bit ? MTLIndexTypeUInt32 : MTLIndexTypeUInt16;
-        [renderEncoder drawIndexedPrimitives:metalPrimitiveType
-                                  indexCount:indexCount
-                                   indexType:indexType
-                                 indexBuffer:metalIndexBuffer
-                           indexBufferOffset:indexOffset];
-        metal_debug_log("draw_indexed_primitives() - SUCCESS (primitiveType=%d, indexCount=%d, indexOffset=%d, is32bit=%d)", primitiveType, indexCount, indexOffset, is32bit);
-    }
-}
-
-HL_PRIM void HL_NAME(draw_indexed_primitives_instanced)(vdynamic *encoder, int primitiveType, int indexCount, vdynamic *indexBuffer, int indexOffset, int instanceCount, int is32bit) {
-    if (encoder == NULL || indexBuffer == NULL || indexCount <= 0 || instanceCount <= 0) return;
-
-    @autoreleasepool {
-        id<MTLRenderCommandEncoder> renderEncoder = (__bridge id<MTLRenderCommandEncoder>)encoder;
-        id<MTLBuffer> metalIndexBuffer = (__bridge id<MTLBuffer>)indexBuffer;
-
-        MTLPrimitiveType metalPrimitiveType = MTLPrimitiveTypeTriangle;
-        switch (primitiveType) {
-            case 0: metalPrimitiveType = MTLPrimitiveTypePoint; break;
-            case 1: metalPrimitiveType = MTLPrimitiveTypeLine; break;
-            case 2: metalPrimitiveType = MTLPrimitiveTypeLineStrip; break;
-            case 3: metalPrimitiveType = MTLPrimitiveTypeTriangle; break;
-            case 4: metalPrimitiveType = MTLPrimitiveTypeTriangleStrip; break;
-        }
-
-        MTLIndexType indexType = is32bit ? MTLIndexTypeUInt32 : MTLIndexTypeUInt16;
-        [renderEncoder drawIndexedPrimitives:metalPrimitiveType
-                                  indexCount:indexCount
-                                   indexType:indexType
-                                 indexBuffer:metalIndexBuffer
-                           indexBufferOffset:indexOffset
-                               instanceCount:instanceCount];
-        metal_debug_log("draw_indexed_primitives_instanced() - SUCCESS (primitiveType=%d, indexCount=%d, indexOffset=%d, instanceCount=%d, is32bit=%d)", primitiveType, indexCount, indexOffset, instanceCount, is32bit);
-    }
-}
-
-HL_PRIM void HL_NAME(end_encoding)(vdynamic *encoder) {
-    if (encoder == NULL) return;
-
-    @autoreleasepool {
-        id<MTLRenderCommandEncoder> renderEncoder = (__bridge_transfer id<MTLRenderCommandEncoder>)encoder;
-        
-        // NOTE: Do NOT clear lastMRTCount here!
-        // MRT textures need to remain available for subsequent passes to read from.
-        // They are only cleared when:
-        // 1. A new MRT pass starts (overwriting the old textures in begin_mrt_render_pass)
-        // 2. At end of frame (in present() or begin_render_pass with clear)
-        
-        [renderEncoder endEncoding];
-        metal_debug_log("end_encoding() - SUCCESS");
-    }
-}
-
-// Viewport and render state (new functions only)
-HL_PRIM void HL_NAME(set_viewport)(vdynamic *encoder, double x, double y, double width, double height) {
-    if (encoder == NULL) return;
-
-    @autoreleasepool {
-        id<MTLRenderCommandEncoder> renderEncoder = (__bridge id<MTLRenderCommandEncoder>)encoder;
-
-        MTLViewport viewport = {x, y, width, height, 0.0, 1.0};
-        [renderEncoder setViewport:viewport];
-        metal_debug_log("set_viewport() - SUCCESS (x=%.2f, y=%.2f, width=%.2f, height=%.2f)", x, y, width, height);
-    }
-}
-
-HL_PRIM void HL_NAME(set_scissor_rect)(vdynamic *encoder, int x, int y, int width, int height) {
-    if (encoder == NULL) return;
-
-    @autoreleasepool {
-        id<MTLRenderCommandEncoder> renderEncoder = (__bridge id<MTLRenderCommandEncoder>)encoder;
-
-        // Coordinates must be non-negative
-        if (x < 0) x = 0;
-        if (y < 0) y = 0;
-
-        MTLScissorRect scissor = {(NSUInteger)x, (NSUInteger)y, (NSUInteger)width, (NSUInteger)height};
-        [renderEncoder setScissorRect:scissor];
-        [renderEncoder setScissorRect:scissor];
-        metal_debug_log("set_scissor_rect() - SUCCESS (x=%d, y=%d, width=%d, height=%d)", x, y, width, height);
-    }
-}
-
-HL_PRIM void HL_NAME(set_stencil_state)(vdynamic *encoder, int depthCompareFunc, bool depthWrite,
-    int frontFunc, int frontSTfail, int frontDPfail, int frontPass,
-    int backFunc, int backSTfail, int backDPfail, int backPass,
-    int reference, int readMask, int writeMask) {
-
-    if (encoder == NULL || ctx == NULL) return;
-
-    @autoreleasepool {
-        id<MTLRenderCommandEncoder> renderEncoder = (__bridge id<MTLRenderCommandEncoder>)encoder;
-        id<MTLDevice> device = (__bridge id<MTLDevice>)ctx->device;
-        NSMutableDictionary *cache = (__bridge NSMutableDictionary*)ctx->depthStencilStateCache;
-
-        // Create cache key from all parameters
-        // Format: "depthFunc-depthWrite-frontFunc-frontFail-frontDepthFail-frontPass-backFunc-backFail-backDepthFail-backPass-readMask-writeMask"
-        NSString *cacheKey = [NSString stringWithFormat:@"%d-%d-%d-%d-%d-%d-%d-%d-%d-%d-%d-%d",
-            depthCompareFunc, depthWrite ? 1 : 0,
-            frontFunc, frontSTfail, frontDPfail, frontPass,
-            backFunc, backSTfail, backDPfail, backPass,
-            readMask, writeMask];
-
-        // Check if state exists in cache
-        id<MTLDepthStencilState> depthStencilState = cache[cacheKey];
-        
-        if (depthStencilState == nil) {
-            // State not cached - create new one
-            MTLDepthStencilDescriptor *descriptor = [[MTLDepthStencilDescriptor alloc] init];
-
-            // Map Heaps Compare enum to Metal compare function
-            // Compare enum: Always=0, Never=1, Equal=2, NotEqual=3, Greater=4, GreaterEqual=5, Less=6, LessEqual=7
-            MTLCompareFunction compareFuncs[] = {
-                MTLCompareFunctionAlways,      // 0: Always
-                MTLCompareFunctionNever,       // 1: Never
-                MTLCompareFunctionEqual,       // 2: Equal
-                MTLCompareFunctionNotEqual,    // 3: NotEqual
-                MTLCompareFunctionGreater,     // 4: Greater
-                MTLCompareFunctionGreaterEqual,// 5: GreaterEqual
-                MTLCompareFunctionLess,        // 6: Less
-                MTLCompareFunctionLessEqual    // 7: LessEqual
-            };
-
-            // Set depth compare function from the parameter
-            descriptor.depthCompareFunction = compareFuncs[depthCompareFunc];
-            descriptor.depthWriteEnabled = depthWrite ? YES : NO;
-
-            // Map Heaps StencilOp enum to Metal stencil operation
-            // StencilOp enum: Keep=0, Zero=1, Replace=2, Increment=3, IncrementWrap=4, Decrement=5, DecrementWrap=6, Invert=7
-            MTLStencilOperation stencilOps[] = {
-                MTLStencilOperationKeep,           // 0: Keep
-                MTLStencilOperationZero,           // 1: Zero
-                MTLStencilOperationReplace,        // 2: Replace
-                MTLStencilOperationIncrementClamp, // 3: Increment
-                MTLStencilOperationIncrementWrap,  // 4: IncrementWrap
-                MTLStencilOperationDecrementClamp, // 5: Decrement
-                MTLStencilOperationDecrementWrap,  // 6: DecrementWrap
-                MTLStencilOperationInvert          // 7: Invert
-            };
-
-            // Front face stencil
-            MTLStencilDescriptor *frontStencil = [[MTLStencilDescriptor alloc] init];
-            frontStencil.stencilCompareFunction = compareFuncs[frontFunc];
-            frontStencil.stencilFailureOperation = stencilOps[frontSTfail];
-            frontStencil.depthFailureOperation = stencilOps[frontDPfail];
-            frontStencil.depthStencilPassOperation = stencilOps[frontPass];
-            frontStencil.readMask = (uint32_t)readMask;
-            frontStencil.writeMask = (uint32_t)writeMask;
-            descriptor.frontFaceStencil = frontStencil;
-
-            // Back face stencil
-            MTLStencilDescriptor *backStencil = [[MTLStencilDescriptor alloc] init];
-            backStencil.stencilCompareFunction = compareFuncs[backFunc];
-            backStencil.stencilFailureOperation = stencilOps[backSTfail];
-            backStencil.depthFailureOperation = stencilOps[backDPfail];
-            backStencil.depthStencilPassOperation = stencilOps[backPass];
-            backStencil.readMask = (uint32_t)readMask;
-            backStencil.writeMask = (uint32_t)writeMask;
-            descriptor.backFaceStencil = backStencil;
-
-            // Create the depth stencil state
-            depthStencilState = [device newDepthStencilStateWithDescriptor:descriptor];
-            
-            // Cache it for future use
-            if (depthStencilState) {
-                cache[cacheKey] = depthStencilState;
-                metal_debug_log("Created and cached new depth-stencil state: %s", [cacheKey UTF8String]);
-            }
-        }
-
-        // Apply the state (cached or newly created)
-        if (depthStencilState) {
-            [renderEncoder setDepthStencilState:depthStencilState];
-            [renderEncoder setStencilReferenceValue:(uint32_t)reference];
-        }
-    }
-}
-
-HL_PRIM vdynamic* HL_NAME(begin_depth_render_pass)(vdynamic *cmdBuffer, vdynamic *depthTexture, double clearDepth) {
-    if (ctx == NULL || cmdBuffer == NULL || depthTexture == NULL) {
-        metal_debug_log("ERROR: begin_depth_render_pass() - invalid parameters");
-        return NULL;
-    }
-
-    @autoreleasepool {
-        id<MTLCommandBuffer> commandBuffer = (__bridge id<MTLCommandBuffer>)cmdBuffer;
-        id<MTLTexture> metalDepthTexture = (__bridge id<MTLTexture>)depthTexture;
-
-        // Update command buffer reference
-        ctx->currentCommandBuffer = (__bridge void*)commandBuffer;
-
-        // Create render pass descriptor with ONLY depth attachment (no color)
-        MTLRenderPassDescriptor *renderPassDescriptor = [MTLRenderPassDescriptor new];
-
-        // Attach depth texture
-        renderPassDescriptor.depthAttachment.texture = metalDepthTexture;
-        renderPassDescriptor.depthAttachment.loadAction = MTLLoadActionClear;
-        renderPassDescriptor.depthAttachment.storeAction = MTLStoreActionStore;
-        renderPassDescriptor.depthAttachment.clearDepth = clearDepth;
-
-        // NO color attachments for depth-only rendering (shadow pass)
-
-        id<MTLRenderCommandEncoder> encoder = [commandBuffer renderCommandEncoderWithDescriptor:renderPassDescriptor];
-        if (encoder == NULL) {
-            metal_debug_log("ERROR: begin_depth_render_pass() - failed to create encoder!");
-            return NULL;
-        }
-
-        // Set winding order to counter-clockwise (Heaps/OpenGL convention)
-        [encoder setFrontFacingWinding:MTLWindingClockwise];
-
-        metal_debug_log("begin_depth_render_pass() - SUCCESS");
-        return (vdynamic*)(__bridge_retained void*)encoder;
-    }
-}
-
-// DEFINE_PRIM macros to export ALL functions to Hashlink
-DEFINE_PRIM(_DYN, get_device, _NO_ARG);
-DEFINE_PRIM(_DYN, create_command_buffer, _NO_ARG);
-DEFINE_PRIM(_BOOL, commit_command_buffer, _DYN);
-DEFINE_PRIM(_BOOL, commit_without_present, _DYN);
-DEFINE_PRIM(_VOID, wait_until_completed, _DYN);
-
-DEFINE_PRIM(_DYN, create_buffer, _I32 _I32);
-DEFINE_PRIM(_BOOL, upload_buffer_data, _DYN _BYTES _I32 _I32);
-
-DEFINE_PRIM(_DYN, create_texture, _I32 _I32 _I32 _I32 _BOOL _BOOL _I32);
-DEFINE_PRIM(_BOOL, upload_texture_data, _DYN _BYTES _I32 _I32 _I32 _I32);
-DEFINE_PRIM(_BOOL, capture_texture_pixels, _DYN _BYTES _I32 _I32 _I32);
-DEFINE_PRIM(_VOID, generate_mipmaps, _DYN);
-DEFINE_PRIM(_VOID, dispose_texture, _DYN);
-
-DEFINE_PRIM(_DYN, create_sampler_state, _I32 _I32 _I32 _I32 _I32);
-DEFINE_PRIM(_VOID, dispose_sampler, _DYN);
-DEFINE_PRIM(_VOID, set_fragment_samplers, _DYN _ARR);
-
-DEFINE_PRIM(_DYN, compile_shader, _STRING _I32);
-DEFINE_PRIM(_DYN, create_render_pipeline, _DYN _DYN _STRING _I32 _I32 _I32 _I32 _I32 _I32);
-DEFINE_PRIM(_VOID, dispose_pipeline, _DYN);
-
-DEFINE_PRIM(_DYN, begin_render_pass, _DYN _I32 _I32 _I32 _I32);
-DEFINE_PRIM(_DYN, resume_render_pass, _DYN);
-DEFINE_PRIM(_DYN, begin_mrt_render_pass, _DYN _ARR _I32 _I32 _I32 _I32 _DYN);
-DEFINE_PRIM(_DYN, begin_texture_render_pass, _DYN _DYN _I32 _I32 _I32 _I32 _DYN _I32 _I32 _I32);
-DEFINE_PRIM(_DYN, begin_depth_render_pass, _DYN _DYN _F64);
-DEFINE_PRIM(_VOID, set_render_pipeline_state, _DYN _DYN);
-DEFINE_PRIM(_VOID, set_depth_state, _DYN _BOOL _BOOL);
-DEFINE_PRIM(_VOID, set_cull_mode, _DYN _I32);
-DEFINE_PRIM(_VOID, set_triangle_fill_mode, _DYN _BOOL);
-DEFINE_PRIM(_VOID, set_vertex_buffer, _DYN _DYN _I32 _I32);
-DEFINE_PRIM(_VOID, set_fragment_texture, _DYN _DYN _I32);
-DEFINE_PRIM(_VOID, set_fragment_buffer, _DYN _DYN _I32 _I32);
-DEFINE_PRIM(_VOID, set_vertex_bytes, _DYN _BYTES _I32 _I32);
-DEFINE_PRIM(_VOID, set_fragment_bytes, _DYN _BYTES _I32 _I32);
-DEFINE_PRIM(_VOID, draw_primitives, _DYN _I32 _I32 _I32);
-DEFINE_PRIM(_VOID, draw_indexed_primitives, _DYN _I32 _I32 _DYN _I32 _I32);
-DEFINE_PRIM(_VOID, draw_indexed_primitives_instanced, _DYN _I32 _I32 _DYN _I32 _I32 _I32);
-DEFINE_PRIM(_VOID, end_encoding, _DYN);
-
-// Logging control - set verbosity level (0=errors, 1=warnings, 2=info, 3=verbose)
 HL_PRIM void HL_NAME(set_debug_level)(int level) {
     metal_set_log_level(level);
 }
-DEFINE_PRIM(_VOID, set_debug_level, _I32);
 
-// Diagnostic logging function
 HL_PRIM void HL_NAME(log_event)(const char *eventName, int param1, int param2) {
     FILE *f = fopen("/tmp/metal_events.log", "a");
     if (f) {
@@ -1779,178 +137,269 @@ HL_PRIM void HL_NAME(log_event)(const char *eventName, int param1, int param2) {
         fclose(f);
     }
 }
-DEFINE_PRIM(_VOID, log_event, _STRING _I32 _I32);
 
+// ============================================================================
+// Thin wrappers — Resources (metal_resources.m)
+// ============================================================================
+
+HL_PRIM vdynamic* HL_NAME(create_buffer)(int size, int usage) {
+    return metal_create_buffer_impl(size, usage);
+}
+
+HL_PRIM bool HL_NAME(upload_buffer_data)(vdynamic *buffer, vbyte *data, int size, int offset) {
+    return metal_upload_buffer_data_impl(buffer, data, size, offset);
+}
+
+HL_PRIM vdynamic* HL_NAME(create_texture)(int width, int height, int format, int usage, bool mipmapped, bool isCube, int arrayLength) {
+    return metal_create_texture_impl(width, height, format, usage, mipmapped, isCube, arrayLength);
+}
+
+HL_PRIM bool HL_NAME(upload_texture_data)(vdynamic *texture, vbyte *data, int width, int height, int level, int slice) {
+    return metal_upload_texture_data_impl(texture, data, width, height, level, slice);
+}
+
+HL_PRIM bool HL_NAME(capture_texture_pixels)(vdynamic *texture, vbyte *data, int width, int height, int level) {
+    return metal_capture_texture_pixels_impl(texture, data, width, height, level);
+}
+
+HL_PRIM void HL_NAME(generate_mipmaps)(vdynamic *texture) {
+    metal_generate_mipmaps_impl(texture);
+}
+
+HL_PRIM void HL_NAME(dispose_texture)(vdynamic *texture) {
+    metal_dispose_texture_impl(texture);
+}
+
+HL_PRIM vdynamic* HL_NAME(create_sampler_state)(int minFilter, int magFilter, int mipFilter, int wrapS, int wrapT) {
+    return metal_create_sampler_state_impl(minFilter, magFilter, mipFilter, wrapS, wrapT);
+}
+
+HL_PRIM void HL_NAME(dispose_buffer)(vdynamic *buffer) {
+    metal_dispose_buffer_impl(buffer);
+}
+
+HL_PRIM void HL_NAME(dispose_sampler)(vdynamic *sampler) {
+    metal_dispose_sampler_impl(sampler);
+}
+
+HL_PRIM void HL_NAME(set_fragment_samplers)(vdynamic *encoder, varray *samplers) {
+    metal_set_fragment_samplers_impl(encoder, samplers);
+}
+
+HL_PRIM void HL_NAME(set_fragment_sampler)(vdynamic *encoder, vdynamic *sampler, int index) {
+    metal_set_fragment_sampler_impl(encoder, sampler, index);
+}
+
+// ============================================================================
+// Thin wrappers — Pipeline (metal_pipeline.m)
+// ============================================================================
+
+HL_PRIM vdynamic* HL_NAME(compile_shader)(vstring *source, int shaderType) {
+    return metal_compile_shader_impl(source, shaderType);
+}
+
+HL_PRIM vdynamic* HL_NAME(create_render_pipeline)(vdynamic *vertexShader, vdynamic *fragmentShader, vstring *vertexDesc, int blendSrc, int blendDst, int blendAlphaSrc, int blendAlphaDst, int blendOp, int blendAlphaOp) {
+    return metal_create_render_pipeline_impl(vertexShader, fragmentShader, vertexDesc, blendSrc, blendDst, blendAlphaSrc, blendAlphaDst, blendOp, blendAlphaOp);
+}
+
+HL_PRIM vdynamic* HL_NAME(create_compute_pipeline_from_function)(vdynamic *func) {
+    return metal_create_compute_pipeline_from_function_impl(func);
+}
+
+HL_PRIM void HL_NAME(dispose_pipeline)(vdynamic *pipeline) {
+    metal_dispose_pipeline_impl(pipeline);
+}
+
+// ============================================================================
+// Thin wrappers — Render (metal_render.m)
+// ============================================================================
+
+HL_PRIM vdynamic* HL_NAME(begin_render_pass)(vdynamic *cmdBuffer, int r, int g, int b, int a) {
+    return metal_begin_render_pass_impl(cmdBuffer, r, g, b, a);
+}
+
+HL_PRIM vdynamic* HL_NAME(resume_render_pass)(vdynamic *cmdBuffer) {
+    return metal_resume_render_pass_impl(cmdBuffer);
+}
+
+HL_PRIM vdynamic* HL_NAME(begin_texture_render_pass)(vdynamic *cmdBuffer, vdynamic *texture, int r, int g, int b, int a, vdynamic *depthTexParam, int layer, int mipLevel, int depthAction) {
+    return metal_begin_texture_render_pass_impl(cmdBuffer, texture, r, g, b, a, depthTexParam, layer, mipLevel, depthAction);
+}
+
+HL_PRIM vdynamic* HL_NAME(begin_mrt_render_pass)(vdynamic *cmdBuffer, varray *textures, int r, int g, int b, int a, vdynamic *depthTex) {
+    return metal_begin_mrt_render_pass_impl(cmdBuffer, textures, r, g, b, a, depthTex);
+}
+
+HL_PRIM vdynamic* HL_NAME(begin_depth_render_pass)(vdynamic *cmdBuffer, vdynamic *depthTexture, double clearDepth) {
+    return metal_begin_depth_render_pass_impl(cmdBuffer, depthTexture, clearDepth);
+}
+
+HL_PRIM void HL_NAME(set_render_pipeline_state)(vdynamic *encoder, vdynamic *pipeline) {
+    metal_set_render_pipeline_state_impl(encoder, pipeline);
+}
+
+HL_PRIM void HL_NAME(set_depth_state)(vdynamic *encoder, bool depthTest, bool depthWrite) {
+    metal_set_depth_state_impl(encoder, depthTest, depthWrite);
+}
+
+HL_PRIM void HL_NAME(set_stencil_state)(vdynamic *encoder, int depthCompareFunc, bool depthWrite,
+    int frontFunc, int frontSTfail, int frontDPfail, int frontPass,
+    int backFunc, int backSTfail, int backDPfail, int backPass,
+    int reference, int readMask, int writeMask) {
+    metal_set_stencil_state_impl(encoder, depthCompareFunc, depthWrite,
+        frontFunc, frontSTfail, frontDPfail, frontPass,
+        backFunc, backSTfail, backDPfail, backPass,
+        reference, readMask, writeMask);
+}
+
+HL_PRIM void HL_NAME(set_cull_mode)(vdynamic *encoder, int cullMode) {
+    metal_set_cull_mode_impl(encoder, cullMode);
+}
+
+HL_PRIM void HL_NAME(set_triangle_fill_mode)(vdynamic *encoder, bool wireframe) {
+    metal_set_triangle_fill_mode_impl(encoder, wireframe);
+}
+
+HL_PRIM void HL_NAME(set_viewport)(vdynamic *encoder, double x, double y, double width, double height) {
+    metal_set_viewport_impl(encoder, x, y, width, height);
+}
+
+HL_PRIM void HL_NAME(set_scissor_rect)(vdynamic *encoder, int x, int y, int width, int height) {
+    metal_set_scissor_rect_impl(encoder, x, y, width, height);
+}
+
+HL_PRIM void HL_NAME(set_vertex_buffer)(vdynamic *encoder, vdynamic *buffer, int offset, int index) {
+    metal_set_vertex_buffer_impl(encoder, buffer, offset, index);
+}
+
+HL_PRIM void HL_NAME(set_vertex_bytes)(vdynamic *encoder, vbyte *data, int length, int index) {
+    metal_set_vertex_bytes_impl(encoder, data, length, index);
+}
+
+HL_PRIM void HL_NAME(set_fragment_bytes)(vdynamic *encoder, vbyte *data, int length, int index) {
+    metal_set_fragment_bytes_impl(encoder, data, length, index);
+}
+
+HL_PRIM void HL_NAME(set_fragment_texture)(vdynamic *encoder, vdynamic *texture, int index) {
+    metal_set_fragment_texture_impl(encoder, texture, index);
+}
+
+HL_PRIM void HL_NAME(set_fragment_buffer)(vdynamic *encoder, vdynamic *buffer, int offset, int index) {
+    metal_set_fragment_buffer_impl(encoder, buffer, offset, index);
+}
+
+HL_PRIM void HL_NAME(draw_primitives)(vdynamic *encoder, int primitiveType, int vertexStart, int vertexCount) {
+    metal_draw_primitives_impl(encoder, primitiveType, vertexStart, vertexCount);
+}
+
+HL_PRIM void HL_NAME(draw_indexed_primitives)(vdynamic *encoder, int primitiveType, int indexCount, vdynamic *indexBuffer, int indexOffset, int is32bit) {
+    metal_draw_indexed_primitives_impl(encoder, primitiveType, indexCount, indexBuffer, indexOffset, is32bit);
+}
+
+HL_PRIM void HL_NAME(draw_indexed_primitives_instanced)(vdynamic *encoder, int primitiveType, int indexCount, vdynamic *indexBuffer, int indexOffset, int instanceCount, int is32bit) {
+    metal_draw_indexed_primitives_instanced_impl(encoder, primitiveType, indexCount, indexBuffer, indexOffset, instanceCount, is32bit);
+}
+
+HL_PRIM void HL_NAME(end_encoding)(vdynamic *encoder) {
+    metal_end_encoding_impl(encoder);
+}
+
+// ============================================================================
+// Thin wrappers — Compute (metal_compute.m)
+// ============================================================================
+
+HL_PRIM vdynamic* HL_NAME(create_compute_pipeline)(vbyte *source, vbyte *functionName) {
+    return metal_create_compute_pipeline_impl(source, functionName);
+}
+
+HL_PRIM void HL_NAME(set_compute_pipeline)(vdynamic *pipeline) {
+    metal_set_compute_pipeline_impl(pipeline);
+}
+
+HL_PRIM void HL_NAME(set_compute_buffer)(vdynamic *buffer, int index) {
+    metal_set_compute_buffer_impl(buffer, index);
+}
+
+HL_PRIM void HL_NAME(set_compute_texture)(vdynamic *texture, int index) {
+    metal_set_compute_texture_impl(texture, index);
+}
+
+HL_PRIM bool HL_NAME(dispatch_compute)(vdynamic *cmdBuffer, int x, int y, int z) {
+    return metal_dispatch_compute_impl(cmdBuffer, x, y, z);
+}
+
+HL_PRIM void HL_NAME(memory_barrier)(vdynamic *cmdBuffer) {
+    metal_memory_barrier_impl(cmdBuffer);
+}
+
+// ============================================================================
+// All DEFINE_PRIM registrations — consolidated
+// ============================================================================
+
+// Context lifecycle
+DEFINE_PRIM(_VOID, init, _NO_ARG);
+DEFINE_PRIM(_BOOL, setup_window, _DYN);
+DEFINE_PRIM(_VOID, shutdown, _NO_ARG);
+
+// Command buffer management
+DEFINE_PRIM(_DYN, get_device, _NO_ARG);
+DEFINE_PRIM(_DYN, create_command_buffer, _NO_ARG);
+DEFINE_PRIM(_BOOL, commit_command_buffer, _DYN);
+DEFINE_PRIM(_BOOL, commit_without_present, _DYN);
+DEFINE_PRIM(_VOID, wait_until_completed, _DYN);
+
+// Resources
+DEFINE_PRIM(_DYN, create_buffer, _I32 _I32);
+DEFINE_PRIM(_BOOL, upload_buffer_data, _DYN _BYTES _I32 _I32);
+DEFINE_PRIM(_DYN, create_texture, _I32 _I32 _I32 _I32 _BOOL _BOOL _I32);
+DEFINE_PRIM(_BOOL, upload_texture_data, _DYN _BYTES _I32 _I32 _I32 _I32);
+DEFINE_PRIM(_BOOL, capture_texture_pixels, _DYN _BYTES _I32 _I32 _I32);
+DEFINE_PRIM(_VOID, generate_mipmaps, _DYN);
+DEFINE_PRIM(_VOID, dispose_buffer, _DYN);
+DEFINE_PRIM(_VOID, dispose_texture, _DYN);
+DEFINE_PRIM(_DYN, create_sampler_state, _I32 _I32 _I32 _I32 _I32);
+DEFINE_PRIM(_VOID, dispose_sampler, _DYN);
+DEFINE_PRIM(_VOID, set_fragment_samplers, _DYN _ARR);
+DEFINE_PRIM(_VOID, set_fragment_sampler, _DYN _DYN _I32);
+
+// Pipeline
+DEFINE_PRIM(_DYN, compile_shader, _STRING _I32);
+DEFINE_PRIM(_DYN, create_render_pipeline, _DYN _DYN _STRING _I32 _I32 _I32 _I32 _I32 _I32);
+DEFINE_PRIM(_DYN, create_compute_pipeline_from_function, _DYN);
+DEFINE_PRIM(_VOID, dispose_pipeline, _DYN);
+
+// Render pass and encoding
+DEFINE_PRIM(_DYN, begin_render_pass, _DYN _I32 _I32 _I32 _I32);
+DEFINE_PRIM(_DYN, resume_render_pass, _DYN);
+DEFINE_PRIM(_DYN, begin_texture_render_pass, _DYN _DYN _I32 _I32 _I32 _I32 _DYN _I32 _I32 _I32);
+DEFINE_PRIM(_DYN, begin_mrt_render_pass, _DYN _ARR _I32 _I32 _I32 _I32 _DYN);
+DEFINE_PRIM(_DYN, begin_depth_render_pass, _DYN _DYN _F64);
+DEFINE_PRIM(_VOID, set_render_pipeline_state, _DYN _DYN);
+DEFINE_PRIM(_VOID, set_depth_state, _DYN _BOOL _BOOL);
+DEFINE_PRIM(_VOID, set_stencil_state, _DYN _I32 _BOOL _I32 _I32 _I32 _I32 _I32 _I32 _I32 _I32 _I32 _I32 _I32);
+DEFINE_PRIM(_VOID, set_cull_mode, _DYN _I32);
+DEFINE_PRIM(_VOID, set_triangle_fill_mode, _DYN _BOOL);
 DEFINE_PRIM(_VOID, set_viewport, _DYN _F64 _F64 _F64 _F64);
 DEFINE_PRIM(_VOID, set_scissor_rect, _DYN _I32 _I32 _I32 _I32);
-DEFINE_PRIM(_VOID, set_stencil_state, _DYN _I32 _BOOL _I32 _I32 _I32 _I32 _I32 _I32 _I32 _I32 _I32 _I32 _I32);
+DEFINE_PRIM(_VOID, set_vertex_buffer, _DYN _DYN _I32 _I32);
+DEFINE_PRIM(_VOID, set_vertex_bytes, _DYN _BYTES _I32 _I32);
+DEFINE_PRIM(_VOID, set_fragment_bytes, _DYN _BYTES _I32 _I32);
+DEFINE_PRIM(_VOID, set_fragment_texture, _DYN _DYN _I32);
+DEFINE_PRIM(_VOID, set_fragment_buffer, _DYN _DYN _I32 _I32);
+DEFINE_PRIM(_VOID, draw_primitives, _DYN _I32 _I32 _I32);
+DEFINE_PRIM(_VOID, draw_indexed_primitives, _DYN _I32 _I32 _DYN _I32 _I32);
+DEFINE_PRIM(_VOID, draw_indexed_primitives_instanced, _DYN _I32 _I32 _DYN _I32 _I32 _I32);
+DEFINE_PRIM(_VOID, end_encoding, _DYN);
 
-// Compute shader support - generic dispatch for Heaps API
-// Stores current compute state for dispatch
-typedef struct {
-    void *pipelineState;     // id<MTLComputePipelineState>
-    void *outputTexture;     // id<MTLTexture> - texture to write to
-    void *inputBuffer;       // id<MTLBuffer> - optional input buffer
-} MetalComputeState;
-
-static MetalComputeState currentComputeState = {NULL, NULL, NULL};
-
-// Set compute pipeline to use for next dispatch
-HL_PRIM void HL_NAME(set_compute_pipeline)(vdynamic *pipeline) {
-    currentComputeState.pipelineState = pipeline;
-    metal_debug_log("set_compute_pipeline - pipeline set");
-}
+// Compute
+DEFINE_PRIM(_DYN, create_compute_pipeline, _BYTES _BYTES);
 DEFINE_PRIM(_VOID, set_compute_pipeline, _DYN);
-
-// Set output texture for compute shader
-HL_PRIM void HL_NAME(set_compute_texture)(vdynamic *texture, int index) {
-    if (index == 0) {
-        currentComputeState.outputTexture = texture;
-        metal_debug_log("set_compute_texture - output texture set at index %d", index);
-    }
-}
-DEFINE_PRIM(_VOID, set_compute_texture, _DYN _I32);
-
-// Set input buffer for compute shader
-HL_PRIM void HL_NAME(set_compute_buffer)(vdynamic *buffer, int index) {
-    if (index == 0) {
-        currentComputeState.inputBuffer = buffer;
-        metal_debug_log("set_compute_buffer - input buffer set at index %d", index);
-    }
-}
 DEFINE_PRIM(_VOID, set_compute_buffer, _DYN _I32);
-
-// Generic compute dispatch using previously set resources
-HL_PRIM bool HL_NAME(dispatch_compute)(vdynamic *cmdBuffer, int x, int y, int z) {
-    if (!ctx || !ctx->device) {
-        metal_log_error("dispatch_compute - context not initialized");
-        return false;
-    }
-
-    if (cmdBuffer == NULL) {
-        metal_log_error("dispatch_compute - null command buffer");
-        return false;
-    }
-
-    // Use current compute state, or fall back to Mandelbrot resources for compatibility
-    void *pipeline = currentComputeState.pipelineState ? currentComputeState.pipelineState : ctx->computePipelineState;
-    void *texture = currentComputeState.outputTexture ? currentComputeState.outputTexture : ctx->mandelbrotTexture;
-    void *buffer = currentComputeState.inputBuffer ? currentComputeState.inputBuffer : ctx->textureAnimationBuffer;
-
-    if (!pipeline) {
-        metal_log_error("dispatch_compute - no compute pipeline set");
-        return false;
-    }
-
-    @autoreleasepool {
-        id<MTLCommandBuffer> commandBuffer = (__bridge id<MTLCommandBuffer>)cmdBuffer;
-        id<MTLComputeCommandEncoder> computeEncoder = [commandBuffer computeCommandEncoder];
-
-        if (!computeEncoder) {
-            metal_log_error("dispatch_compute - failed to create compute encoder");
-            return false;
-        }
-
-        // Set the compute pipeline state
-        [computeEncoder setComputePipelineState:(__bridge id<MTLComputePipelineState>)pipeline];
-
-        // Set output texture if available
-        if (texture) {
-            [computeEncoder setTexture:(__bridge id<MTLTexture>)texture atIndex:0];
-        }
-
-        // Set input buffer if available
-        if (buffer) {
-            [computeEncoder setBuffer:(__bridge id<MTLBuffer>)buffer offset:0 atIndex:0];
-        }
-
-        // Dispatch thread groups
-        // x, y, z are thread GROUP counts, not total thread counts
-        // Each group has 8x8x1 threads (from setLayout in shader)
-        MTLSize threadgroupsPerGrid = MTLSizeMake(x, y, z);
-        MTLSize threadsPerThreadgroup = MTLSizeMake(8, 8, 1);
-
-        // Dispatch the compute shader using thread groups
-        [computeEncoder dispatchThreadgroups:threadgroupsPerGrid threadsPerThreadgroup:threadsPerThreadgroup];
-
-        // End encoding
-        [computeEncoder endEncoding];
-
-        metal_debug_log("dispatch_compute - dispatched %dx%dx%d threads", x, y, z);
-        return true;
-    }
-}
+DEFINE_PRIM(_VOID, set_compute_texture, _DYN _I32);
 DEFINE_PRIM(_BOOL, dispatch_compute, _DYN _I32 _I32 _I32);
-
-// Memory barrier implementation for Metal
-HL_PRIM void HL_NAME(memory_barrier)(vdynamic *cmdBuffer) {
-    if (cmdBuffer == NULL) {
-        metal_log_warning("memory_barrier - null command buffer");
-        return;
-    }
-
-    @autoreleasepool {
-        id<MTLCommandBuffer> commandBuffer = (__bridge id<MTLCommandBuffer>)cmdBuffer;
-        
-        // In Metal, we use a blit encoder to ensure ordering
-        id<MTLBlitCommandEncoder> blitEncoder = [commandBuffer blitCommandEncoder];
-        [blitEncoder endEncoding];
-        
-        metal_debug_log("memory_barrier - barrier inserted");
-    }
-}
 DEFINE_PRIM(_VOID, memory_barrier, _DYN);
 
-// Create compute pipeline from MSL source code
-HL_PRIM vdynamic* HL_NAME(create_compute_pipeline)(vbyte *source, vbyte *functionName) {
-    if (!ctx || !ctx->device) {
-        metal_log_error("create_compute_pipeline - context not initialized");
-        return NULL;
-    }
-
-    if (!source || !functionName) {
-        metal_log_error("create_compute_pipeline - null source or function name");
-        return NULL;
-    }
-
-    @autoreleasepool {
-        id<MTLDevice> device = (__bridge id<MTLDevice>)ctx->device;
-        NSError *error = nil;
-
-        // Convert source to NSString
-        NSString *sourceStr = [NSString stringWithUTF8String:(const char*)source];
-        NSString *funcNameStr = [NSString stringWithUTF8String:(const char*)functionName];
-
-        // Compile shader source
-        id<MTLLibrary> library = [device newLibraryWithSource:sourceStr options:nil error:&error];
-        if (!library) {
-            metal_log_error("create_compute_pipeline - failed to compile shader: %s", 
-                          [[error localizedDescription] UTF8String]);
-            return NULL;
-        }
-
-        // Get compute function
-        id<MTLFunction> computeFunction = [library newFunctionWithName:funcNameStr];
-        if (!computeFunction) {
-            metal_log_error("create_compute_pipeline - function '%s' not found in shader", 
-                          [funcNameStr UTF8String]);
-            return NULL;
-        }
-
-        // Create compute pipeline state
-        id<MTLComputePipelineState> pipelineState = [device newComputePipelineStateWithFunction:computeFunction error:&error];
-        if (!pipelineState) {
-            metal_log_error("create_compute_pipeline - failed to create pipeline: %s",
-                          [[error localizedDescription] UTF8String]);
-            return NULL;
-        }
-
-        metal_debug_log("create_compute_pipeline - created pipeline for function '%s'", 
-                       [funcNameStr UTF8String]);
-        
-        return (vdynamic*)(__bridge_retained void*)pipelineState;
-    }
-}
-DEFINE_PRIM(_DYN, create_compute_pipeline, _BYTES _BYTES);
-DEFINE_PRIM(_DYN, create_compute_pipeline_from_function, _DYN);
+// Logging
+DEFINE_PRIM(_VOID, set_debug_level, _I32);
+DEFINE_PRIM(_VOID, log_event, _STRING _I32 _I32);
 

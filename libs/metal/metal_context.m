@@ -110,10 +110,6 @@ void metal_init_context(void) {
         ctx->commandQueue = (__bridge_retained void*)commandQueue; // Bridge with retain
         metal_debug_log("Metal command queue created");
 
-        // Initialize animation state
-        ctx->angle = 0.0f;
-        ctx->frameIndex = 0;
-
         ctx->windowSetup = false;
         metal_debug_log("Metal init complete");
     }
@@ -186,18 +182,6 @@ bool metal_setup_window_context(vdynamic *win) {
         ctx->depthTexture = (__bridge_retained void*)depthTexture;
         metal_debug_log("Depth texture created with size %d x %d", width, height);
 
-        // Setup frame data for animation
-        if (!metal_setup_frame_data()) {
-            metal_debug_log("Failed to setup frame data");
-            return false;
-        }
-
-        // Initialize frame debugging
-        if (!metal_init_frame_debugging_impl()) {
-            metal_debug_log("Failed to initialize frame debugging");
-            return false;
-        }
-
         ctx->windowSetup = true;
         metal_debug_log("Window setup complete");
     }
@@ -214,19 +198,20 @@ void metal_shutdown_context(void) {
                 ctx->metalView = NULL;
             }
 
+            // Release retained production resources
+            if (ctx->depthTexture) {
+                id<MTLTexture> depthTexture = (__bridge_transfer id<MTLTexture>)ctx->depthTexture;
+                (void)depthTexture;
+                ctx->depthTexture = NULL;
+            }
+
+            if (ctx->depthStencilStateCache) {
+                NSMutableDictionary *cache = (__bridge_transfer NSMutableDictionary *)ctx->depthStencilStateCache;
+                (void)cache;
+                ctx->depthStencilStateCache = NULL;
+            }
+
             // Release Metal resources with proper ARC handling
-            if (ctx->pipelineState) {
-                id<MTLRenderPipelineState> pipelineState = (__bridge_transfer id<MTLRenderPipelineState>)ctx->pipelineState;
-                (void)pipelineState; // Suppress unused variable warning - ARC will handle release
-                ctx->pipelineState = NULL;
-            }
-
-            if (ctx->vertexBuffer) {
-                id<MTLBuffer> vertexBuffer = (__bridge_transfer id<MTLBuffer>)ctx->vertexBuffer;
-                (void)vertexBuffer; // Suppress unused variable warning - ARC will handle release
-                ctx->vertexBuffer = NULL;
-            }
-
             if (ctx->commandQueue) {
                 id<MTLCommandQueue> commandQueue = (__bridge_transfer id<MTLCommandQueue>)ctx->commandQueue;
                 (void)commandQueue; // Suppress unused variable warning - ARC will handle release
@@ -251,19 +236,3 @@ void metal_shutdown_context(void) {
     }
 }
 
-// Hashlink exports for context management
-HL_PRIM void HL_NAME(init)(void) {
-    metal_init_context();
-}
-
-HL_PRIM bool HL_NAME(setup_window)(vdynamic *win) {
-    return metal_setup_window_context(win);
-}
-
-HL_PRIM void HL_NAME(shutdown)(void) {
-    metal_shutdown_context();
-}
-
-DEFINE_PRIM(_VOID, init, _NO_ARG);
-DEFINE_PRIM(_BOOL, setup_window, _DYN);
-DEFINE_PRIM(_VOID, shutdown, _NO_ARG);

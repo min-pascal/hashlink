@@ -13,8 +13,6 @@
 
 // Common constants and macros
 #define DEBUG_FILE "/tmp/metal_debug.log"
-#define MAX_FRAMES_IN_FLIGHT 3
-#define NUM_INSTANCES 32
 
 // Buffer usage flags (match h3d.Buffer.BufferFlag enum)
 #define BUFFER_FLAG_DYNAMIC      (1 << 0)  // Dynamic buffer content
@@ -32,172 +30,36 @@
 
 // Forward declarations
 typedef struct metal_context metal_context;
-typedef struct metal_vertex metal_vertex;
-typedef struct frame_data frame_data;
-typedef struct metal_instance_data metal_instance_data;
-
-// Vertex structure with position and color for triangle rendering
-struct metal_vertex {
-    float position[3];
-    float color[4];
-};
-
-// Frame data structure for animation
-struct frame_data {
-    float angle;
-};
-
-// Instance data for instanced rendering
-struct metal_instance_data {
-    simd_float4x4 instanceTransform;
-    simd_float4 instanceColor;
-};
-
-// Camera data structure for perspective rendering
-struct metal_camera_data {
-    simd_float4x4 perspectiveTransform;
-    simd_float4x4 worldTransform;
-};
-
-// Vertex structure with position and normal for lighting
-struct metal_lighting_vertex {
-    float position[3];
-    float normal[3];
-};
-
-// Instance data for lighting with normal transform
-struct metal_lighting_instance_data {
-    simd_float4x4 instanceTransform;
-    simd_float3x3 instanceNormalTransform;
-    simd_float4 instanceColor;
-};
-
-// Camera data for lighting with normal transform
-struct metal_lighting_camera_data {
-    simd_float4x4 perspectiveTransform;
-    simd_float4x4 worldTransform;
-    simd_float3x3 worldNormalTransform;
-};
-
-// Vertex structure with position, normal, and texture coordinates for textured rendering
-struct metal_textured_vertex {
-    float position[3];
-    float normal[3];
-    float texcoord[2];
-};
 
 // Main context structure - use void* for ARC compatibility
 struct metal_context {
-    void *device;           // id<MTLDevice>
-    void *commandQueue;     // id<MTLCommandQueue>
-    void *layer;            // CAMetalLayer*
+    void *device;              // id<MTLDevice>
+    void *commandQueue;        // id<MTLCommandQueue>
+    void *layer;               // CAMetalLayer*
     SDL_MetalView metalView;
     SDL_Window *window;
     bool windowSetup;
 
     // Current frame rendering state
-    void *currentDrawable;     // id<CAMetalDrawable> - current frame's drawable
-    void *currentCommandBuffer; // id<MTLCommandBuffer> - current frame's command buffer
-    void *depthDisabledState;  // id<MTLDepthStencilState> - depth disabled
-    void *depthEnabledState;   // id<MTLDepthStencilState> - depth enabled
-
-    // Pipeline states
-    void *pipelineState;           // id<MTLRenderPipelineState>
-    void *vertexBuffer;            // id<MTLBuffer>
-    NSUInteger vertexCount;
-
-    // Support for argument buffers
-    void *argBuffer;               // id<MTLBuffer>
-    void *positionBuffer;          // id<MTLBuffer>
-    void *colorBuffer;             // id<MTLBuffer>
-
-    // Animation support
-    float angle;
-    void *frameDataBuffer;         // id<MTLBuffer>
-    void *frameSemaphore;          // dispatch_semaphore_t
-    int frameIndex;
-    void *frameDataBuffers[MAX_FRAMES_IN_FLIGHT];  // id<MTLBuffer>
-
-    // Instancing support fields
-    void *instanceDataBuffers[MAX_FRAMES_IN_FLIGHT];  // id<MTLBuffer>
-    void *instanceIndexBuffer;     // id<MTLBuffer>
-    void *instanceVertexBuffer;    // id<MTLBuffer>
-    void *instancingPipelineState; // id<MTLRenderPipelineState>
-    NSUInteger instanceIndexCount;
-    NSUInteger instanceVertexCount;
-
-    // Perspective rendering support fields
-    void *perspectiveVertexBuffer;     // id<MTLBuffer>
-    void *perspectiveIndexBuffer;      // id<MTLBuffer>
-    void *perspectivePipelineState;    // id<MTLRenderPipelineState>
-    void *perspectiveDepthStencilState; // id<MTLDepthStencilState>
-    void *cameraDataBuffers[MAX_FRAMES_IN_FLIGHT]; // id<MTLBuffer>
-    void *depthTexture;                // id<MTLTexture> - for depth testing
-    NSUInteger perspectiveIndexCount;
-    NSUInteger perspectiveVertexCount;
-
-    // Vertex debugging support fields for colored dots on cube vertices
-    void *debugVertexBuffer;           // id<MTLBuffer> - vertex positions for debugging dots
-    void *debugPipelineState;          // id<MTLRenderPipelineState> - point rendering pipeline
-    void *debugInstanceDataBuffers[MAX_FRAMES_IN_FLIGHT]; // id<MTLBuffer> - instance data for debug dots
-    NSUInteger debugVertexCount;
-    bool debugDotsEnabled;             // Flag to enable/disable debug dots rendering
-
-    // Lighting rendering support fields
-    void *lightingVertexBuffer;        // id<MTLBuffer> - vertices with normals
-    void *lightingIndexBuffer;         // id<MTLBuffer> - cube indices
-    void *lightingPipelineState;       // id<MTLRenderPipelineState> - lighting pipeline
-    void *lightingDepthStencilState;   // id<MTLDepthStencilState> - depth state
-    void *lightingInstanceDataBuffers[MAX_FRAMES_IN_FLIGHT]; // id<MTLBuffer> - instance data with normal transforms
-    void *lightingCameraDataBuffers[MAX_FRAMES_IN_FLIGHT];   // id<MTLBuffer> - camera data with normal transforms
-    NSUInteger lightingIndexCount;
-    NSUInteger lightingVertexCount;
-
-    // Textured rendering support fields
-    void *texturedVertexBuffer;        // id<MTLBuffer> - vertices with texture coordinates
-    void *texturedIndexBuffer;         // id<MTLBuffer> - textured object indices
-    void *texturedPipelineState;       // id<MTLRenderPipelineState> - textured rendering pipeline
-    void *texturedDepthStencilState;   // id<MTLDepthStencilState> - depth state for textured objects
-    void *texturedInstanceDataBuffers[MAX_FRAMES_IN_FLIGHT]; // id<MTLBuffer> - instance data for textured objects
-    void *texturedCameraDataBuffers[MAX_FRAMES_IN_FLIGHT];   // id<MTLBuffer> - camera data for textured objects
-    void *checkerboardTexture;         // id<MTLTexture> - procedural checkerboard texture
-    NSUInteger texturedIndexCount;
-    NSUInteger texturedVertexCount;
-
-    // Compute shader rendering support fields
-    void *computePipelineState;        // id<MTLComputePipelineState> - compute pipeline for Mandelbrot generation
-    void *computeRenderPipelineState;  // id<MTLRenderPipelineState> - render pipeline for compute-textured cubes
-    void *computeDepthStencilState;    // id<MTLDepthStencilState> - depth state for compute-textured objects
-    void *computeVertexBuffer;         // id<MTLBuffer> - vertices for compute-textured cubes
-    void *computeIndexBuffer;          // id<MTLBuffer> - indices for compute-textured cubes
-    void *computeInstanceDataBuffers[MAX_FRAMES_IN_FLIGHT]; // id<MTLBuffer> - instance data for compute cubes
-    void *computeCameraDataBuffers[MAX_FRAMES_IN_FLIGHT];   // id<MTLBuffer> - camera data for compute cubes
-    void *mandelbrotTexture;           // id<MTLTexture> - Mandelbrot texture generated by compute shader
-    void *textureAnimationBuffer;      // id<MTLBuffer> - animation frame counter for compute shader
-    NSUInteger computeIndexCount;
-    NSUInteger computeVertexCount;
-    uint animationIndex;               // Frame counter for Mandelbrot animation
+    void *currentDrawable;     // id<CAMetalDrawable>
+    void *currentCommandBuffer; // id<MTLCommandBuffer>
 
     // Current frame resources
-    int currentTargetPixelFormat;     // MTLPixelFormat - current render target format
-    int currentMRTCount;              // Number of color attachments for MRT (1 for single target)
-    int currentMRTPixelFormats[8];    // MTLPixelFormat for each MRT attachment (max 8)
-    bool hasDepthBuffer;              // Flag indicating if current render pass has depth buffer attached
+    int currentTargetPixelFormat;     // MTLPixelFormat
+    int currentMRTCount;
+    int currentMRTPixelFormats[8];
+    bool hasDepthBuffer;
 
     // MRT texture tracking for deferred rendering
-    void *lastMRTTextures[8];         // id<MTLTexture>[] - textures written in previous MRT pass
-    int lastMRTCount;                 // Number of MRT textures from previous pass
-    void *lastMRTDepthTexture;        // id<MTLTexture> - depth texture from previous MRT pass
+    void *lastMRTTextures[8];         // id<MTLTexture>[]
+    int lastMRTCount;
+    void *lastMRTDepthTexture;        // id<MTLTexture>
 
-    // Frame debugging support fields
-    bool frameCaptureTrigger;          // Flag to trigger GPU frame capture
-    bool frameCaptureInProgress;       // Flag indicating capture is in progress
-    bool hasFrameCaptured;             // Flag indicating if a capture has been completed
-    void *captureStartTime;            // NSDate* - time when app started for auto-capture timeout
-    double autoCaptureTimeoutSecs;     // Timeout for automatic capture triggering
-    
+    // Depth buffer
+    void *depthTexture;               // id<MTLTexture>
+
     // Depth-stencil state cache
-    void *depthStencilStateCache;      // NSMutableDictionary* - cache of depth-stencil states keyed by configuration
+    void *depthStencilStateCache;     // NSMutableDictionary*
 };
 
 // Global context
@@ -245,62 +107,55 @@ void metal_init_context(void);
 bool metal_setup_window_context(vdynamic *win);
 void metal_shutdown_context(void);
 
-// Shader management functions (metal_shaders.m)
-extern NSString *shaderSource;
-extern NSString *instancingShaderSource;
-extern NSString *perspectiveShaderSource;
-extern NSString *debugPointShaderSource;
-extern NSString *texturingShaderSource;
-extern NSString *computeShaderSource;
-bool metal_setup_pipeline(void);
-bool metal_setup_instancing_pipeline(void);
-bool metal_setup_perspective_pipeline(void);
-bool metal_setup_debug_point_pipeline(void);
-bool metal_setup_textured_pipeline(void);
-bool metal_setup_compute_pipeline(void);
-
-// Buffer management functions (metal_buffers.m)
-vdynamic* metal_alloc_buffer_impl(int size, int flags);
+// Resources (metal_resources.m)
+vdynamic* metal_create_buffer_impl(int size, int usage);
+bool metal_upload_buffer_data_impl(vdynamic *buffer, vbyte *data, int size, int offset);
+vdynamic* metal_create_texture_impl(int width, int height, int format, int usage, bool mipmapped, bool isCube, int arrayLength);
+bool metal_upload_texture_data_impl(vdynamic *texture, vbyte *data, int width, int height, int level, int slice);
+bool metal_capture_texture_pixels_impl(vdynamic *texture, vbyte *data, int width, int height, int level);
+void metal_generate_mipmaps_impl(vdynamic *texture);
+void metal_dispose_texture_impl(vdynamic *texture);
+vdynamic* metal_create_sampler_state_impl(int minFilter, int magFilter, int mipFilter, int wrapS, int wrapT);
 void metal_dispose_buffer_impl(vdynamic *buffer);
-bool metal_update_buffer_impl(vdynamic *buffer, void *data, int size, int offset);
-bool metal_setup_frame_data(void);
+void metal_dispose_sampler_impl(vdynamic *sampler);
+void metal_set_fragment_samplers_impl(vdynamic *encoder, varray *samplers);
+void metal_set_fragment_sampler_impl(vdynamic *encoder, vdynamic *sampler, int index);
 
-// Basic rendering functions (metal_rendering.m)
-bool metal_begin_render_impl(int r, int g, int b, int a);
-bool metal_create_triangle_impl(float* positions, float* colors, int vertexCount);
-bool metal_render_triangle_impl(int r, int g, int b, int a);
+// Pipeline (metal_pipeline.m)
+vdynamic* metal_compile_shader_impl(vstring *source, int shaderType);
+vdynamic* metal_create_render_pipeline_impl(vdynamic *vertexShader, vdynamic *fragmentShader, vstring *vertexDesc, int blendSrc, int blendDst, int blendAlphaSrc, int blendAlphaDst, int blendOp, int blendAlphaOp);
+vdynamic* metal_create_compute_pipeline_from_function_impl(vdynamic *func);
+void metal_dispose_pipeline_impl(vdynamic *pipeline);
 
-// Advanced rendering functions (metal_advanced.m)
-bool metal_create_triangle_with_argbuffers_impl(float* positions, float* colors, int vertexCount);
-bool metal_render_triangle_with_argbuffers_impl(int r, int g, int b, int a);
-bool metal_create_instanced_rectangles_impl(void);
-bool metal_render_instanced_rectangles_impl(int r, int g, int b, int a);
+// Render (metal_render.m)
+vdynamic* metal_begin_render_pass_impl(vdynamic *cmdBuffer, int r, int g, int b, int a);
+vdynamic* metal_resume_render_pass_impl(vdynamic *cmdBuffer);
+vdynamic* metal_begin_texture_render_pass_impl(vdynamic *cmdBuffer, vdynamic *texture, int r, int g, int b, int a, vdynamic *depthTexParam, int layer, int mipLevel, int depthAction);
+vdynamic* metal_begin_mrt_render_pass_impl(vdynamic *cmdBuffer, varray *textures, int r, int g, int b, int a, vdynamic *depthTex);
+vdynamic* metal_begin_depth_render_pass_impl(vdynamic *cmdBuffer, vdynamic *depthTexture, double clearDepth);
+void metal_set_render_pipeline_state_impl(vdynamic *encoder, vdynamic *pipeline);
+void metal_set_depth_state_impl(vdynamic *encoder, bool depthTest, bool depthWrite);
+void metal_set_stencil_state_impl(vdynamic *encoder, int depthCompareFunc, bool depthWrite, int frontFunc, int frontSTfail, int frontDPfail, int frontPass, int backFunc, int backSTfail, int backDPfail, int backPass, int reference, int readMask, int writeMask);
+void metal_set_cull_mode_impl(vdynamic *encoder, int cullMode);
+void metal_set_triangle_fill_mode_impl(vdynamic *encoder, bool wireframe);
+void metal_set_viewport_impl(vdynamic *encoder, double x, double y, double width, double height);
+void metal_set_scissor_rect_impl(vdynamic *encoder, int x, int y, int width, int height);
+void metal_set_vertex_buffer_impl(vdynamic *encoder, vdynamic *buffer, int offset, int index);
+void metal_set_vertex_bytes_impl(vdynamic *encoder, vbyte *data, int length, int index);
+void metal_set_fragment_bytes_impl(vdynamic *encoder, vbyte *data, int length, int index);
+void metal_set_fragment_texture_impl(vdynamic *encoder, vdynamic *texture, int index);
+void metal_set_fragment_buffer_impl(vdynamic *encoder, vdynamic *buffer, int offset, int index);
+void metal_draw_primitives_impl(vdynamic *encoder, int primitiveType, int vertexStart, int vertexCount);
+void metal_draw_indexed_primitives_impl(vdynamic *encoder, int primitiveType, int indexCount, vdynamic *indexBuffer, int indexOffset, int is32bit);
+void metal_draw_indexed_primitives_instanced_impl(vdynamic *encoder, int primitiveType, int indexCount, vdynamic *indexBuffer, int indexOffset, int instanceCount, int is32bit);
+void metal_end_encoding_impl(vdynamic *encoder);
 
-// Perspective rendering functions (metal_perspective.m)
-bool metal_create_perspective_cubes_impl(void);
-bool metal_render_perspective_cubes_impl(int r, int g, int b, int a);
-bool metal_enable_debug_dots_impl(bool enable);
-
-// Lighting rendering functions (metal_lighting.m)
-bool metal_create_lighting_cubes_impl(void);
-bool metal_render_lighting_cubes_impl(int r, int g, int b, int a);
-
-// Textured rendering functions (metal_texturing.m)
-bool metal_create_textured_cubes_impl(void);
-bool metal_render_textured_cubes_impl(int r, int g, int b, int a);
-
-// Compute shader rendering functions (metal_compute.m)
-bool metal_create_compute_cubes_impl(void);
-bool metal_render_compute_cubes_impl(int r, int g, int b, int a);
-bool metal_generate_mandelbrot_texture_impl(void);
-
-// Frame debugging functions (metal_frame_debugging.m)
-bool metal_trigger_frame_capture_impl(void);
-bool metal_check_auto_capture_impl(void);
-bool metal_init_frame_debugging_impl(void);
-bool metal_stop_frame_capture_and_open_impl(void);
-
-// Utility functions
-simd_float3 addFloat3(simd_float3 a, simd_float3 b);
+// Compute (metal_compute.m)
+vdynamic* metal_create_compute_pipeline_impl(vbyte *source, vbyte *functionName);
+void metal_set_compute_pipeline_impl(vdynamic *pipeline);
+void metal_set_compute_buffer_impl(vdynamic *buffer, int index);
+void metal_set_compute_texture_impl(vdynamic *texture, int index);
+bool metal_dispatch_compute_impl(vdynamic *cmdBuffer, int x, int y, int z);
+void metal_memory_barrier_impl(vdynamic *cmdBuffer);
 
 #endif // METAL_H
